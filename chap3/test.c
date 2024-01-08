@@ -12,6 +12,7 @@ int main(int argc, const char* argv[])
     //     printf("sleep 1s");
     // }
     printf("sizeof(long) = %ld\n", sizeof(long));
-    printf("goodbye");
+    printf("goodbye\n");
+    printf("%ld", sysconf(_SC_CHILD_MAX));
     return 0;
 }
