@@ -34,8 +34,148 @@ sleep 是可以被信号打断的。
 
 #### 目录结构规划
 
+- `_include`目录：用于存放各种头文件
+- `app`目录：main()函数所在的文件
+  - `link_obj`(临时目录，是用 makefile 创建的)
+  - `dep`临时目录，会存放临时的`.d`开头的依赖文件，能够告知系统哪些相关的文件发生变化，可以重新编译
+  - `nginx.c`：主文件，main()入口函数就放到这里
+  - `ngx_conf.c`：普通源码文件，跟主文件关系密切，但又不值得单独放在一个目录
+- `misc`目录：专门存放各种杂合性的，不好归类的，1 个到多个源文件
+- `net`目录：专门存放和网络处理相关的：.c 文件，暂时为空
+- `proc`目录：专门存放和进程处理相关的 .c 文件，暂时为空
+- `signal`目录：专门用于存放和信号处理相关的 .c 文件
+
 #### 编译工具 make 的使用概述
+
+每个 .c 生成一个 .o，多个.c 生成多个.o。最终这些.o 被链接在一起，生成一个可执行文件
+
+1. 我们要借助 make 的命令来编译：能够编译，链接，最终生成可执行文件。
+
+大型项目一般都会用 make 来搞（其实应该很多用 cmake 了）
+
+2. make 命令的工作原理，就去当前目录读取一个叫做 makefile 的文本文件。
+
+根据这个 makefile 的规则，把我们这个源代码编译成可执行文件。
+
+当然也有类似的工具生成 makefile（比方说 autotools）
+
+3. makefile 文件：文本文件，utf8 编码格式，一般放在根目录下，也会根据需要放在子目录中
+
+#### 规划一下 makefile 文件
+
+##### 根目录下的 3 个 make 文件
+
+1. makefile：是编译项目的入口脚本，编译项目从这里开始，起总体控制作用
+2. config.mk：这是一个配置脚本，会被 makefile 包含。单独分离出来是为了应付可变的东西
+3. common.mk：是最核心，最重要编译脚本，用来定义 makfiled 呃编译规则，依赖规则等，通用性很强。并且各个子目录中都用到了这个 common.mk 来编译 .c 文件
+
+##### 各个字母目录下（app,signal）都有一个 makefile 文件
+
+每个 makfile 文件都会包含根目录下的 common.mk，
+从而实现自己这个子目录下的 .c 文件的编译
+
+我们将要写的 makefile 不支持目录中嵌套子目录的情况。（只有一级目录）
+
+##### 其他规划
+
+/app/link_obj 临时目录，用来存放 .0 目标文件
+
+/app/dep 存放，d 开头的依赖关系文件
 
 #### makefile 脚本的用法介绍
 
+1. 编译项目：生成可执行文件
+
+2. makefile 很大一部分代码就是描述：依赖关系
+
+时间戳对比
+
 #### makefile 脚本具体实现讲解
+
+<!-- TODO 王健伟老师讲那个 makefile，还是太草了，还得是cmake -->
+
+## 读配置文件、查泄露、设置标题
+
+以`#`开头的行作为注释行，里面除了注释之外不要用中文，
+只在配置文件中使用字母、数字、下划线
+
+### 配置文件读取
+
+这个代码是可以直接用在其他项目中的
+
+#### 前提内容和修改
+
+#### 配置文件读取功能实战
+
+### 内存泄露的检查工具
+
+```sh
+~/DOCs/cpp/cpplinux/project/build (main*) » brew install valgrind
+valgrind: Linux is required for this software.
+Error: valgrind: An unsatisfied requirement failed this build.
+```
+
+我的评价是：虚拟机，启动！
+
+#### memcheck 的基本功能
+
+1. 使用未初始化的内存
+2. 使用已经释放了的内存
+3. 使用超过 malloc() 分配的内存
+4. 对堆栈的非法访问
+5. 申请的内存是否释放
+6. malloc/new，new/delete 配对问题
+7. memcpy 内存拷贝函数中，原指针和目标指针重叠
+
+#### 内存泄露检查示范
+
+格式：
+
+```sh
+valgrind --tool=memcheck [一些开关] [可执行文件名]
+```
+
+常见的开关：
+
+`--leak-check=full`完全 full 检查内存泄露
+
+`--show-reachable=yes`显示内存泄露的地点
+
+`--trace-children=yes`是否跟入子进程
+
+`--log-file=log.txt`将调试信息输出到 log.txt，不输出到屏幕
+
+### 设置可执行文件的标题
+
+就是我们可以看到 nginx 有 master 和 worker 的标识，
+我们也希望为我们的进程也有名字标识
+
+```sh
+┌──(parallels㉿kali-linux-2022-2)-[/usr/local/nginx/sbin]
+└─$ ps -ef | grep nginx
+root      390932       1  0 11:43 ?        00:00:00 nginx: master process ./nginx
+nobody    390934  390932  0 11:43 ?        00:00:00 nginx: worker process
+paralle+  391023  385265  0 11:43 pts/0    00:00:00 grep --color=auto nginx
+```
+
+修改标题，也就是修改：`argv[0]`。
+但是这是有问题的，如果 len(newstr) > len(argv[0])，
+那么在 strcpy(newstr, argv[0])就有可能导致下标越界的情况。
+
+实际上：argv[0]、argv[1]、...、argv[argc-1]这些是连在一起的。
+如果 argv[0]过长，就会覆盖 argv[1]...
+
+argv 之后，紧挨着的是：环境变量信息`extern char** environ`。
+argv 内存 与 environ 内存紧挨着
+
+困难就是：不仅仅会破坏 argv[1]...的内存，还可能会破坏 environ 的内存。
+
+思路：
+
+1. 重新分配内存，用来保存 environ
+2. 修改 argv[0] 所指向的内存
+3.
+
+#### 原理和实现思路分析
+
+#### 设置可执行程序的标题实战代码
