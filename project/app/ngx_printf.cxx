@@ -7,7 +7,17 @@
 #include "ngx_func.h"
 #include "ngx_macro.h"
 
-// staitc限制作用域
+/**
+ * @brief
+ *
+ * @param buf
+ * @param last
+ * @param ui64
+ * @param zero 场宽填充：' ' 或 '0'
+ * @param hexadecimal 十六进制 格式
+ * @param width
+ * @return u_char*
+ */
 static u_char* ngx_sprintf_num(u_char* buf, u_char* last, uint64_t ui64, u_char zero, uintptr_t hexadecimal, uintptr_t width)
 {
     u_char *p, temp[NGX_INT64_LEN + 1];
@@ -40,12 +50,20 @@ static u_char* ngx_sprintf_num(u_char* buf, u_char* last, uint64_t ui64, u_char 
         } while (ui64 >>= 4);
     } // if (hexadecimal == 0)
 
+    len = (temp + NGX_INT64_LEN) - p;
+
+    // 需要填充width-len个zero，填充方向 -->
+    while (len++ < width && buf < last) {
+        *buf++ = zero;
+    }
+
     len = (temp + NGX_INT64_LEN) - p; // 数字占的字符数
 
     if ((buf + len) >= last) {
         len = last - buf;
     }
 
+    // 但是其实我觉得这个memcpy有点问题，万一这个memcpy不是-->拷贝的呢？如果是乱序的呢？
     return ngx_cpymem(buf, p, len);
 }
 
@@ -192,11 +210,32 @@ u_char* ngx_vslprintf(u_char* buf, u_char* last, const char* fmt, va_list args)
             buf = ngx_sprintf_num(buf, last, ui64, zero, hex, width);
             fmt++;
 
-        } /* end if (*fmt == '%') */ else {
+        } /* end if (*fmt == '%') */ else { // 不是 %
             *buf++ = *fmt++;
         } /* end if (*fmt == '%') */
 
     } // end while (*fmt != '\0' && buf < last)
 
     return buf;
+}
+
+/**
+ * @brief 这个是ngx_vslprintf的封装
+ *
+ * @param buf
+ * @param last
+ * @param fmt
+ * @param ...
+ * @return u_char*
+ */
+u_char* ngx_slprintf(u_char* buf, u_char* last, const char* fmt, ...)
+{
+    va_list args;
+    u_char* p;
+
+    va_start(args, fmt);
+    p = ngx_vslprintf(buf, last, fmt, args);
+    va_end(args);
+
+    return p;
 }
