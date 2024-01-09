@@ -334,6 +334,128 @@ printf 行缓存问题，不及时的往终端上打印，只有 unix 系统才�
 
 ### write() 函数思考
 
+#### 真的会竞争嘛？
+
+坑：多个进程同时去写一个文件，会不会造成混乱？
+
+经过老师演示，可以看到：多个进程同时写一个日志文件，我们看到，输出结果并不会混乱，是有序的。
+看来我们的日志代码应对多进程是可以的。
+
+想要知道怎么会导致不混乱：涉及到文件共享，原子操作，dup，dup2 的讲解。
+
+《apue》：3.10 ~ 3.12、8.3
+
+首先，我们的程序是：在父进程中打开（open），然后子进程复制父进程的所有信息，
+这样可以保证我们读写文件并不会混乱。
+垂丝梦中惊坐起，tlpi，不同句柄，指向打开文件表的一项，文件末尾指针啥的。
+
+我们打开文件的时候，有一个选项`O_APPEND`这个标记能够保证多个进程操作同一个文件时不会互相覆盖
+
+并且，write 是原子操作，因此不会被截断，数据竞争
+
 #### 掉电导致 write() 的数据丢失破解法
 
+write() 调用返回时，内核已经将 应用程序缓冲区 所提供的数据 放到了 内核缓冲区。
+但是无法保证，数据已经写出到其预定的目的地（如果是这里的日志文件的话，那么预定的目的地就是磁盘）。
+
+的确，因为 write 调用，速度极快，可能没有时间完成【实际写磁盘】的工作，
+所以 write()调用不等价于：
+数据在 内核缓冲区 和 磁盘 之间的交换
+
+应用程序缓冲区 errstr ---(write())---> 内核缓冲区/高速页缓存 ------> 存储设备（磁盘等）
+
+write 速度很快，因为数据从 errstr 到 内存缓冲区 很快。
+
+可以看到内核的一些信息：
+
+```sh
+(base) ┌──(parallels㉿)-[/media/…/DOCs/cpp/cpplinux/project]
+└─$ /proc/sys/vm
+
+(base) ┌──(parallels㉿)-[/proc/sys/vm]
+└─$ ll
+total 0
+-rw-r--r-- 1 root root 0 Jan  9 23:06 admin_reserve_kbytes
+-rw-r--r-- 1 root root 0 Jan  9 23:06 compaction_proactiveness
+--w------- 1 root root 0 Jan  9 23:06 compact_memory
+-rw-r--r-- 1 root root 0 Jan  9 23:06 compact_unevictable_allowed
+-rw-r--r-- 1 root root 0 Jan  9 23:06 dirty_background_bytes
+
+(base) ┌──(parallels㉿)-[/proc/sys/vm]
+└─$ cat dirty_writeback_centisecs
+500
+```
+
+1. 直接 IO
+
+open 文件时，立即写入磁盘`O_DIRECT`，
+绕过内核缓冲区，绕过物理磁盘，需要将 “应用程序缓冲区” 字节对其 posix_memalign，可能至少是 512 的倍数
+
+2. 同步
+
+open 文件时，使用`O_SYNC`选项，
+同步选项 p【把数据直接同步到磁盘】，使每次 write 操作等待物理 IO 操作的完成。
+具体来说，就是将写入内核缓冲区的数据立即写入磁盘，将掉电损失降到了最低。
+
+上面两种方式，无比要大块大块的写入，一般都是 512 ~ 4k 写，这个与磁盘的构造（扇区）有关系
+
+3. 缓存同步（推荐）
+
+尽量保证：换成数据与写入磁盘上的数据一致。
+
+三个函数：
+
+- `sync(void)`：将所有修改过的块缓冲区排入队列，然后返回，并不等待实际写磁盘操作结束。但是，数据是否写入磁盘并没有保证
+- `fsync(int fd)`：将 fd 对应的文件的块缓冲区立即写入磁盘，并等待实际写磁盘操作结束后返回：比方说数据库会用
+- `fdatasync(int fd)`：类似于 fsync，但只影响文件的数据部分。而 fsync 不一样，fsync 除数据外，还会同步更新文件的属性（一般 data 与 属性 分开存储）
+
+推荐使用`fsync(int fd)`
+
+比方说，写入 4M 的文件，一般是一次 write(4k)。1000（1024）次之后，
+这个文件会被 write 完整，这个时候调用一次 fsync(fd)。
+多次 write，调用一次 fsync，这才是 fsync 的正确用法
+
 ### 标准 IO 库
+
+- fopen、fclose
+- fread、fwrite
+- fflush（刷新 clib）
+- fseek
+- fgets、getc、getchar
+- fputc、put、putchar
+- fgets、gets
+- printf、fprintf、sprintf
+- scanf、fscanf、sscanf
+
+stdio，会有一个 stdio 缓冲区(clib buffer)，
+stdio 库，就有一种中间夹了一层的感觉。
+
+控制流、数据流
+
+`<stdio.h>`与`<unistd.h>`，一个是标准库，一个是系统库。
+两个抽象层次不一样。
+
+所有系统调用都是原子性的。——《tlpi》
+
+## chap4 - 05 - 守护进程 及 信号处理实战
+
+### 守护进程功能的实现
+
+回顾：
+
+1. 拦截掉 SIGHUP，那么终端窗口关闭，进程就不会跟着关闭
+2. 守护进程，运行在后台，不会占用终端
+
+是否按：守护进程方式运行 `Daemon=1`
+
+fork() 出子进程 ------> 父进程 return，子进程 setsid() ------> umask(0) ------> 打开黑洞设备 ------> dup2，重定向到黑洞
+
+只有我们这里 fork() 出来的子进程，这个子进程才是 master 进程
+
+因为我们这里是 重定向到黑洞，如果我们想要打印一些信息，创建守护进程应该在 打印必要信息 之后
+
+那么就是需要将 printf，改成：日志输出
+
+### 信号处理函数的进一步完善
+
+#### 避免子进程被杀死时变成僵尸进程
