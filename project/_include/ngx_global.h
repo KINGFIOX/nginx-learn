@@ -10,4 +10,8 @@ extern char** g_os_argv;
 extern char* gp_envmem;
 extern int g_environlen;
 
+void ngx_init_setproctitle();
+
+void ngx_setproctitle(const char* title);
+
 #endif
