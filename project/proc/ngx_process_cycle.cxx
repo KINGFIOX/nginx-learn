@@ -32,3 +32,5 @@ void ngx_master_process_cycle()
     if (sigprocmask(SIG_BLOCK, &set, NULL) == -1) {
     }
 }
+
+// 子进程的循环可能会有：资源释放的问题

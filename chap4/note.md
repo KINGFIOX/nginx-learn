@@ -215,6 +215,26 @@ environ 搬家成功：
 
 ## chap4 - 04 - 信号、子进程实战、文件 IO 详谈
 
+### 程序运行的相对路径与绝对路径
+
+```sh
+┌──(parallels㉿kali-linux-2022-2)-[/media/…/DOCs/cpp/cpplinux/project]
+└─$ ./build/nginx
+nginx: 配置文件[nginx.conf]载入失败，退出！
+程序退出，再见！
+
+┌──(parallels㉿kali-linux-2022-2)-[/media/…/DOCs/cpp/cpplinux/project]
+└─$ cd build
+
+┌──(parallels㉿kali-linux-2022-2)-[/media/…/cpp/cpplinux/project/build]
+└─$ ./nginx
+nginx: [alert] could not open err log file: open() "logs/error1.log" failed (2: No such file or directory)
+nginx: sigaction(SIGHUP) succeed!
+nginx: sigaction(SIGINT) succeed!
+```
+
+就是我记得，我写那个 lsh 的时候，就有提到 workspace 的概念
+
 ### 信号功能实战
 
 热更新、重启子进程
@@ -227,13 +247,90 @@ sigaction 初步，看代码
 
 官方 nginx，一个 master 进程，创建了多个 worker 子进程
 
+```sh
+kill -<signal> -<grpid> # 可以杀死一组进程
+```
+
 #### sigsuspend() 函数详解
+
+master 进程中，最重要的函数。
+
+阻塞在这里，等待一个信号，并且进程是刮起的，不占用 CPU 时间，
+只有收到信号才会被唤醒。唤醒的意思就是：返回了。
+
+这个`sigsuspend()`是一个原子操作，将很多操作捏在了一起。
+因为一些历史原因：可能会发生对信号的现象。sigsuspend()的原子操作就很重要了。
+
+sigsuspend()做了这么几件事：
+
+1. 根据给定的参数设置新的 mask 并阻塞当前进程
+2. 此时，一旦接收信号，便会恢复原先的信号屏蔽
+3. 调用改信号对应的信号处理函数
+4. 信号处理函数返回后，sigsuspend 返回，使程序流程继续往下走
+5. printf("for 进来了!\n")，发现一个坑，如果 printf 不加\n，无法即使显示到屏幕上，是行缓存问题
+
+`sigsuspend()`函数用于暂停当前进程的执行，直到收到一个信号。
+这个函数接受一个指向`sigset_t`类型的指针作为参数，这个`sigset_t`类型的变量定义了在`sigsuspend()`调用期间需要阻塞的信号。
+
+所以，`sigsuspend()`函数实际上是接收那些在其参数信号集中未被阻塞的信号。
+如果一个信号在`sigsuspend()`的参数信号集中被阻塞，那么`sigsuspend()`就不会因为这个信号而返回。
+
+例如，如果你创建了一个阻塞所有信号的信号集，并将其传递给`sigsuspend()`，
+那么`sigsuspend()`就会一直挂起，直到一个不能被阻塞的信号（如`SIGKILL`或`SIGSTOP`）到达。
+如果你创建了一个空的信号集，并将其传递给`sigsuspend()`，那么`sigsuspend()`就会在任何信号到达时返回。
 
 ### 日志输出重要信息 谈
 
 #### 换行回车进一步演示
 
+- `\r`回车符：把 输出/打印 信息的位置定位到本行的开头（左边）
+- `\n`换行符：把输出的位置移动到下一行（但是其实光标的位置应该仍然是在上一行）
+- 一般来说：把光标移动到下一行的开头：`\r\n`
+
+一些设计者就会有不同的想法：
+
+- windows，每行结尾`\r\n`，肯定是不可能只回车不换行的，否则就会反复覆盖
+- unix，每行结尾就只有`\n`
+
+结论，统一用`\n`即可。
+
+可以使用下面代码验证一下
+
+```py
+# Python
+def check_newline_character():
+  with open('test.txt', 'w') as f:
+      f.write('Test')
+
+  with open('test.txt', 'rb') as f:
+    content = f.read()
+    if b'\r\n' in content:
+      print("The newline character is '\\r\\n'")
+    elif b'\n' in content:
+      print("The newline character is '\\n'")
+    elif b'\r' in content:
+      print("The newline character is '\\r'")
+    else:
+      print("No newline character found")
+
+check_newline_character()
+```
+
+输出结果如图：
+
+![rn](image/rn.png)
+
+可见，我们的小 mac，依然是`\n`
+
 #### printf() 函数不加 \n 无法及时输出的解释
+
+printf 行缓存问题，不及时的往终端上打印，只有 unix 系统才会遇到这种情况
+
+但是 ANSI C 中定义`\n`认为是行刷新标记，
+所以，printf 函数没有带`\n`是不会自动刷新到输出流的，
+直到遇到了`\n`
+
+当然也是可以手动调用 flush 了
 
 ### write() 函数思考
 
