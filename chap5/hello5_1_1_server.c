@@ -25,11 +25,13 @@ int main(int argc, char* argv[])
     // 参数2表示：服务器可以积压未处理完的链接总个数
     listen(listenfd, 32);
 
-    const char* pcontent = "I sent sth. to client!";
+    const char* pcontent = "how polite you are\n";
 
     int i = 0;
     for (;;) {
         int connfd = accept(listenfd, (struct sockaddr*)NULL, NULL);
+        char recvline[1000 + 1];
+        read(connfd, recvline, 1000);
         write(connfd, pcontent, strlen(pcontent));
         printf("连接%d\n", i++);
         close(connfd); // 发送完成，就关闭与客户端的连接
