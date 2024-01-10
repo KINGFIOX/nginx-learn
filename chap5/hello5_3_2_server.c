@@ -17,8 +17,8 @@ int main(int argc, char* argv[])
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET; // ipv4
-    serv_addr.sin_port = htons(SERV_PORT); // 绑定端口
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY); // 监听所有ip
+    serv_addr.sin_port = htons(SERV_PORT); // 绑定端口
 
     int reuseaddr = 1; // 这里的1表示确实启用该选项，这个函数的接口很奇怪
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr)) == -1) {

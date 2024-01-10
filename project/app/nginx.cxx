@@ -1,12 +1,14 @@
-#include "ngx_c_conf.h"
-#include "ngx_func.h"
-#include "ngx_global.h"
-#include "ngx_macro.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <unistd.h>
+
+#include "ngx_c_conf.h"
+#include "ngx_c_socket.h"
+#include "ngx_func.h"
+#include "ngx_global.h"
+#include "ngx_macro.h"
 
 // 初始化全局变量 ----------------
 size_t g_argvneedmem = 0;
@@ -21,8 +23,11 @@ pid_t ngx_pid;
 pid_t ngx_parent;
 int ngx_process;
 
-// 标记子进程的状态
+// 标记子进程的状态 -------------
 sig_atomic_t ngx_reap;
+
+// socket相关 ----------------
+CSocket g_socket;
 
 // 集中释放资源
 void freeresource();
@@ -62,7 +67,13 @@ int main(int argc, char* argv[])
 
     // （3）一些初始化函数，准备放这里
     ngx_log_init();
+    // 初始化信号
     if (ngx_init_signals() != 0) {
+        exitcode = 1;
+        goto lblexit;
+    }
+    // 初始化socket
+    if (g_socket.Initialize() == false) {
         exitcode = 1;
         goto lblexit;
     }
