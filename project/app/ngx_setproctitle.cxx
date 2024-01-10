@@ -8,11 +8,8 @@
 void ngx_init_setproctitle()
 {
     // 环境变量搬家
-    for (int i = 0; environ[i]; i++) {
-        g_environlen += strlen(environ[i]) + 1; // 最后这个 +1 是 \0
-    }
-
-    gp_envmem = new char[g_environlen];
+    gp_envmem = new char[g_envneedmem];
+    memset(gp_envmem, 0, g_envneedmem);
 
     char* ptmp = gp_envmem;
 
@@ -37,7 +34,7 @@ void ngx_setproctitle(const char* title)
         e_environlen += strlen(g_os_argv[i]) + 1;
     }
 
-    size_t esy = e_environlen + g_environlen; // argv和environment内存综合
+    size_t esy = e_environlen + g_envneedmem; // argv和environment内存综合
 
     if (esy <= ititlelen) {
         // 设置的标题太长了

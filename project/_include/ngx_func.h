@@ -18,13 +18,17 @@ void ngx_log_stderr(int err, const char* fmt, ...);
 u_char* ngx_log_errno(u_char* buf, u_char* last, int err);
 void ngx_log_error_core(int level, int err, const char* fmt, ...);
 
-// 集中释放资源 ---------
-void freeresource();
-
 // 信号 ----------------
 int ngx_init_signals();
 
-// 子进程实战
+// 子进程
 void ngx_master_process_cycle();
+
+/**
+ * @brief 创建守护进程
+ * 
+ * @return int ：-1 失败; 1 父进程; 0 子进程
+ */
+int ngx_daemon();
 
 #endif //  __NGX_FUNC_H__

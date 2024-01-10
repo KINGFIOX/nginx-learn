@@ -26,6 +26,8 @@
 #define NGX_MAX_UINT32_VALUE (uint32_t)0xffffffff /* 最大的32位无符号数：十进制是‭4294967295‬ */
 #define NGX_INT64_LEN (sizeof("-9223372036854775808") - 1) /* 20个字节 */
 
-// ------------
+// 进程相关 ------------
+#define NGX_PROCESS_MASTER 0 /* master进程，管理进程 */
+#define NGX_PROCESS_WORKER 1 /* worker进程，工作进程 */
 
 #endif
