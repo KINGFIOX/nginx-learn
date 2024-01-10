@@ -252,11 +252,122 @@ host 10.211.55.3 and port 9000
 
 ### TCP 状态转换
 
+同一个 ip，同一个端口，只能被 bind 一次，
+就会调用失败，并且显示错误信息`address already in use`，
+就好像，一个班级里，学号一定是不一样的一样。
+
+介绍命令：netstat，是用来显示网络相关信息的，端口状态之类的
+
+`-a`参数，用来显示所有选项
+
+`-n`全部显示成数字
+
+`-p`显示端口对应的策划那个续命
+
+```sh
+(base) ┌──(parallels㉿kali-linux-2022-2)-[/media/…/DOCs/cpp/cpplinux/chap5]
+└─$ netstat -anp | grep -E 'State|9000' # 这个State表示，是显示状态行
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:9000            0.0.0.0:*               LISTEN      53806/hello5_3_1_se
+Proto RefCnt Flags       Type       State         I-Node   PID/Program name     Path
+```
+
+`0.0.0.0`表示，本机的任意地址，也就是`serv_addr.sin_addr.s_addr = htonl(INADDR_ANY)`
+
+此时，telnet 连接服务器端，这个时候再次查看网络状态
+
+```sh
+(base) ┌──(parallels㉿kali-linux-2022-2)-[/media/…/DOCs/cpp/cpplinux/chap5]
+└─$ netstat -anp | grep -E 'State|9000'
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:9000            0.0.0.0:*               LISTEN      53806/hello5_3_1_se
+tcp        0      0 10.211.55.3:9000        10.211.55.2:61137       TIME_WAIT   -
+tcp        0      0 10.211.55.3:9000        10.211.55.2:61136       TIME_WAIT   -
+```
+
+我们用两个客户端连接到服务器，服务器给每个客户端发送一串字符，并关闭客户端。
+我们用 netstat 观察：原来的 监听端口一直是【listen】，但是当来了两个连接之后【连接到服务器的 9000 端口】，
+虽然这两个连接被 close 掉了，但是产生了两条【TIME_WAIT】信息（【两条】是因为有【两个客户端】）
+
+但是如果我，重启服务器，这个时候会失败，提示是：address already in use，是因为依然有两个【TIME_WAIT】，
+确实，我上面在玩那个 telnet 的时候，确实遇到了这个小问题。
+
+现象总结：只要客户端 连接到服务器，并且 服务器把客户端关闭，那么服务端就会产生一条 9000 监听端口的 状态为 TIME_WAIT 的连接。
+那么此时重启服务器，bind 返回失败
+
+这个是一个 TCP 转换的问题：《unix 网络变成 卷 1》2.6（TCP 状态转换图）、2.7（专门介绍了 TIME_WAIT 状态）
+
+TCP 状态转换图（一共有 11 中状态），是针对【一个 socket 连接】而言的：
+【一个 socket 连接】处于这 11 种状态的一种。
+
+![stat](image/stat.jpeg)
+
+四次挥手，谁主动 close 连接，谁就会给对象发送一个 【FIN 标志位】的一个数据包给对方。
+我们的代码中，是服务器发送的。
+
 ### TIME_WAIT 详解
 
-#### RST 标志
+TIME_WAIT 状态的产生
+
+主动关闭的一方： ESTABLISHED ---(服务器给客户端发送 FIN)---> FIN_WAIT_1
+---(服务器收到了客户端的 ACK)---> FIN_WAIT_2 ---（服务器接收到了客户端的 FIN）---> TIME_WAIT
+---(等待 2MSL，大概是 1 ～ 4min)---> CLOSE
+
+被动关闭的一方： ESTABLISHED ---(客户端接收到了服务器的 FIN)---> CLOSE_WAIT
+---（再次发送 FIN）---> LAST_ACK ------> CLOSE
+
+这个 TIME_WAIT 就好像是：退出不够利索。当这种状态存在的时候，重启服务器就会失败
+
+![wait](image/wait.png)
+
+《unix 网络编程》对 time_wait 的描述：
+
+上面图的四次挥手中，如果 3th 包丢了，
+客户端会在一定时候以后，重新发送 3th 包，
+有 time_wait 的存在，那么服务器还有机会接收到这个【重发的 3th 包】。
+然后服务器发送 4th 包给客户端，客户端接收到了 4th 包，LAST_ACK 结束--->CLOSE。
+
+（1）可靠的实现 TCP 全双工的终止
+
+如果没有 time_wait，服务端接收到了 fin 包，会给客户端发送 rst 包（而不是 ack 包），
+那么客户端收到 rst 包时，某些函数如果没有考虑到这次状态 会报错。（会跳入有限状态机的 IDLE 状态，不正确的假设，鲁棒性）
+（而且这个 RST 还有可能会导致数据的丢失）
+
+（1.1）RST 标志
+
+对于每一个 TCP 连接，操作系统是要开辟出来一个 收缓冲区，和一个 发送缓冲区 来处理数据的 收 和 发。
+当我们 close 一个 tcp 连接时，如果我们这个发送缓冲区还有数据，那么操作系统会很优雅的把发送缓冲区里的数据发送王壁，
+然后再发 fin 包表示连接关闭。
+
+【FIN 四次挥手】是一个优雅的关闭标志，表示正常的 TCP 连接关闭。
+
+【RST 标志】出现这个标志的包，一般都表示：异常关闭; 如果发生了异常，一般都会导致丢失一些数据包。
+不是正常的四次挥手关闭，所以如果你这么关闭 tcp 连接，那么主动关闭一方也不会进入 TIME_WAIT。
+
+如果将来用 setsockopt(SO_LINGER) 选项要是开启，【服务器接收到了 RST】如果服务器的发送缓冲区里面有 数据，那么这个数据会被直接丢弃。
+
+（2）允许老的重复的 tcp 数据包在网络中消逝
+
+2MSL 是数据包最长生命周期 的 两倍。
+等待存留在网络上的数据包被 路由器等 杀死。
+防止再次启动服务器以后，被服务器识别。
 
 ### SO_REUSEADDR
+
+`setsockopt(SO_REUSEADDR)`用在服务端 socket 创建之后，bind()之前。
+
+四个能力：
+
+（1）SO_REUSEADDR 允许启动一个监听服务器并绑定器端口，即使 TIME_WAIT 状态存在，服务器 bind()依然能够成功
+
+（2）允许同一个端口上，启动同一个服务器的多个实例，只要每个实例捆绑一个不同的本地 IP 地址即可;
+
+（3）允许同一个进程绑定同一个端口到多个 socket，只要每次捆绑指定不同的本地 IP 地址即可
+
+（4）允许完全重复的绑定：当一个 IP 地址和端口已经绑定到某个 socket 上时，如果传输协议支持，
+同样的 ip 地址和端口还可以绑定到另一个 socket 上 Lyiban 来说，本特性仅支持 UDPsocket
+
+**所有 TCP 服务器都应该支持本 socket 选项**，以防止当 socket 处于 TIME_WAIT 时 bind()失败
 
 #### 两个进程，绑定同一个 ip 和端口
 
