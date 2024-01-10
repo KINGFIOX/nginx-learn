@@ -1,3 +1,4 @@
+#include <asm-generic/socket.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -18,6 +19,12 @@ int main(int argc, char* argv[])
     serv_addr.sin_family = AF_INET; // ipv4
     serv_addr.sin_port = htons(SERV_PORT); // 绑定端口
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY); // 监听所有ip
+
+    int reuseaddr = 1; // 这里的1表示确实启用该选项，这个函数的接口很奇怪
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr)) == -1) {
+        char* peeorinfo = strerror(errno);
+        printf("setsockopt(SO_REUSEADDR)返回值为-1, 错误码为:%d, 错误信息为:%s;\n", errno, peeorinfo);
+    }
 
     if (bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == -1) {
         char* perrorinfo = strerror(errno);

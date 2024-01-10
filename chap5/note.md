@@ -369,6 +369,94 @@ TIME_WAIT 状态的产生
 
 **所有 TCP 服务器都应该支持本 socket 选项**，以防止当 socket 处于 TIME_WAIT 时 bind()失败
 
-#### 两个进程，绑定同一个 ip 和端口
+```c
+int listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
-#### time_wait 状态时的 bind 绑定
+int reuseaddr = 1; // 这里的1表示确实启用该选项，这个函数的接口很奇怪
+if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr)) == -1) {
+    char* peeorinfo = strerror(errno);
+    printf("setsockopt(SO_REUSEADDR)返回值为-1, 错误码为:%d, 错误信息为:%s;\n", errno, peeorinfo);
+}
+
+bind()
+```
+
+## chap5 - 04 - listen()队列、阻塞非阻塞、同步异步
+
+### listen() 队列剖析
+
+listen() 函数：监听端口，用在 TCP 连接中的 服务端 角色
+
+`int listen(int sockfd, int backlog)`
+
+要理解好 backlog 这个参数，我们需要先谈一谈 “监听 socket 队列” 这个问题。
+
+对于一个调用 listen()进行监听的 socket，操作系统会给这个 socket 维护两个队列
+
+1） 未完成连接队列【保存连接用的】
+
+当 client 发送 tcp 连接【三次握手】的第一次【syn 包】给服务器的时候，
+服务器就会【未完成队列】中创建一个 跟这个 sync 包对应的一项。
+其实，我们可以把这项看成是一个【半连接】，这个半连接状态会从【LISTEN】变为【SYNC——REVD】状态，
+同时给 client 返回【第二次握手包 syn ack】。这个时候，其实服务器是在【等待完成第三次握手】
+（当然，正常情况下，client 会返回 ack 包）
+
+2） 已完成连接队列【保存连接用的】
+
+当【第三次握手完成】了，这个连接就变成了 ESTABLISHED 状态，每个【已经完成三次握手】的客户端
+都放在这个队列中作为一项。
+
+backlog（积压的意思），已完成队列 + 未完成队列 <= backlog
+
+（1）客户端这个 connect()返回的时机：收到【第二次握手包 syn ack】之后就返回了
+
+（2）RTT 是 【未完成队列中任意一项在未完成队列中 滞留的时间】，这个时间取决于客户端和服务器。
+RTT 是【服务器接收到 syn】---> 【服务端接收到了 ack】的时间。差不多就是：【2th 3th 握手】的时间。
+客户端的 RTT 是【1th 2th 握手】的时间（其实这个关注一下 未完成 就行了）
+。如果这三次握手传递速度比较快的话，大概是 187ms。
+
+如果恶意用户，迟迟不发送【第三次握手】，那么【半连接队列】就会满，
+半连接队列中的一项，滞留时间是 75s
+
+#### accept() 函数
+
+accept()：就是从【已完成队列】中的【队首】位置取出来一项，返回给进程。
+【已完成队列】中的每一项就是一个 socket。
+
+在我们的程序`hello5_3_2_server.c`中，如果【已完成队列】为空，
+那么就会【休眠】等待（cpu 时间片切换给其他进程），一直到 已完成队列 中的有一项时，才会被唤醒。
+所以，从编程角度，我们要 "尽快" 的用 accept()把已完成队列终端的数据取走！
+（这里注意一下，实际上，client 的 accept 返回的比 server 的 accept 返回的早），
+这个套接字就代表【已经用三次握手建立起来】的【tcp 连接】，因为 accept() 是从：【已完成队列】中取的数据。
+
+有两种 socket
+
+1. 监听 9000 端口这个 socket，【监听 socket（listenfd）】，只要服务器程序在运行，这个 socket 就应该一直存在
+2. 当 client 连接进来，操作系统会为每个【成功建立三次握手】的 client 再创建一个 socket（accept 返回的 socket），随后 server 使用这个 socket(connfd) 与 client 通信
+
+#### syn 攻击【syn flood(溢出)】
+
+如果一个恶意用户，不停地给服务器发送 syn 包
+
+### 阻塞 与 非阻塞 IO
+
+异步 IO
+
+#### IO 复用
+
+#### 思考题
+
+（1）
+
+如果 已完成队列 + 未完成队列 > backlog，也就是队列满了，
+此时，如果再有一个 client 发送 sync 请求，服务器会怎么反应？
+
+实际上，服务器会忽略这个 syn 包，不给回应。client 这边，发现 syn 没反应，过一段时间会重发。
+应该是连着 3 次发送失败，client 的 accept 就会返回失败。
+
+从连接被扔到【已完成队列】中去，到 accept()从【已完成队列】中取出来，这是有时间差的。
+
+如果 server 还没来得及返回这个 socket，client 就发来数据，这个数据数据就会被保存在：
+已经连接的 socket 的接收缓冲区里。
+
+，
