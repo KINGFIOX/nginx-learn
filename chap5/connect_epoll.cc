@@ -68,8 +68,20 @@ int main(int argc, char* argv[])
             exit(EXIT_FAILURE);
         }
 
+        /* 来一点调试信息 */
+        printf("nfds = %d\n", nfds);
+
+        printf("listenfd\tconnfd\n");
+        for (int i = 0; i < nfds; i++) {
+            if (events[i].data.fd == listenfd) {
+                printf("%d\t\t%d\tok\n", listenfd, events[i].data.fd);
+            } else {
+                printf("\t\t%d\t\n", events[i].data.fd);
+            }
+        }
+
         for (int n = 0; n < nfds; ++n) {
-            if (events[n].data.fd == listenfd) {
+            if (events[n].data.fd == listenfd) { // listen动了，获取客户端的socket
                 int connfd = accept(listenfd, (struct sockaddr*)NULL, NULL);
                 if (connfd == -1) {
                     perror("accept");
@@ -84,11 +96,28 @@ int main(int argc, char* argv[])
                     perror("epoll_ctl: connfd");
                     exit(EXIT_FAILURE);
                 }
-            } else {
-                // Handle read/write events here
-                const char* pcontent = "I sent sth. to client!\n";
+            } else { // 客户端动了
+                char buffer[1024];
+                // 返回从client读取到的字节数
+                ssize_t numRead = read(events[n].data.fd, buffer, sizeof(buffer) - 1);
+                if (numRead == -1) {
+                    perror("read");
+                    exit(EXIT_FAILURE);
+                } else if (numRead == 0) {
+                    if (epoll_ctl(epollfd, EPOLL_CTL_DEL, events[n].data.fd, NULL) == -1) {
+                        perror("epoll_ctl: del");
+                        exit(EXIT_FAILURE);
+                    }
+                    close(events[n].data.fd);
+                } else {
+                    // Handle read/write events here
+                    buffer[numRead] = '\0';
+                    printf("Received from client: %s", buffer);
+                }
+                const char pcontent[] = "你真礼貌!\n";
                 write(events[n].data.fd, pcontent, strlen(pcontent));
                 printf("The server sent a string to the client~~~~~~~~~~!\n");
+
                 close(events[n].data.fd);
             }
         }
