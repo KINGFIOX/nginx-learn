@@ -546,20 +546,163 @@ aio_read()是一个异步 IO 函数，需要给 aio_read()提供一个 buf 和�
 
 ### epoll 技术简介
 
+上面，同步 IO 有两个函数，一个用来等待 socket，
+一个是用来处理数据的
+
 #### epoll 概述
 
-#### 学习 epoll 要达到的效果及一些说明
+epoll 就是一种典型的 IO 多路复用技术，
+epoll 技术的最大特点就是：支持高并发。
+
+除了 epoll 还有 kqueue(freebsd)
 
 ### epoll 原理 与 函数介绍
 
 #### 课件介绍
 
+NtyTcp 项目，里面有手动实现 epoll，
+几个文件，比较好的：nty_epoll_rb.c，nty_epoll.c
+
+还有一个 c1000k 项目
+
 #### epoll_create()函数
+
+调用格式
+
+```sh
+// size > 0
+int epoll_create(int size);
+```
+
+创建一个 epoll 对象，返回 “句柄”
+
+epoll 对象最终要用 close()，因为 句柄 总是要关闭的。
+
+原理：
+
+1. 分配了一段内存，创建了一个对象 eventpoll
+2. rbr 结构成员：指向红黑树的根节点的指针。刚开始指向空
+3. rdlist 结构成员：双向链表的 表头指针
+
+4. 初始化红黑树
+5. 创建双向链表
+
+红黑树用来保存 key-value，有序表。查找效率很高
 
 #### epoll_ctl()函数
 
+功能：把一个 socket 以及这个 socket 相关的事件添加到这个 epoll 对象描述符中，
+目的就是通过这个 epoll 对象监视这个 socket【客户端的 tcp 连接】
+
+我们把感兴趣的事件通过 epoll_ctl()添加到系统。当有数据来往时，系统会通知我们。
+
+```cpp
+int epoll_ctl(int fdpd, int op, int sockid, struct epoll_event *event)
+// fdpd: epoll_create() 返回的epoll对象描述符
+// op: 动作，添加、删除、修改，对应数字是1(EPOLL_CTL_ADD)、2(EPOLL_CTL_DEL)、3(EPOLL_CTL_MOD)
+   // 添加节点，就相当于是给红黑树上添加节点。每个客户端连接服务器后，服务器都会产生一个对应的socket，每个连接这个socket都不重复。
+   // 修改节点上value：就是把红黑树对应的节点，他的value修改
+   // 删除key：从红黑树上把这个节点干掉，这会导致这个socket上无法收到任何系统通知
+   // 这个数据结构的索引：父节点，左右孩子节点，用一段内存rbn包裹着。
+// socketid: 表示客户端连接，就是从accept()。
+// event：事件信息，这里包括的是一些事件信息，ADD和MOD都要用到这个event参数里面的事件信息
+```
+
+如果有 100w 并发的话，那么就是往这个红黑树中插入 100w 个节点。
+
 #### epoll_wait()函数
+
+当事件发生，我们如何拿到操作系统的通知？
+
+功能：阻塞一小段时间并等待事件发生，返回事件集合，也就是获取内核的事件通知。
+也就是：遍历双向链表，把双向链表节点数据拷贝出去，拷贝完毕的，就从双向链表中移出。
+
+双向链表中记录的是：所有有数据的 socket【tcp 连接】。
+
+就是我的 100w 个 socket 连接，实际有事件的，可能也就 100 个，这 100 个是放在 双向链表 中的。
+
+```cpp
+int epoll_wait(int epfd, struct epoll_event * events, int maxevents, int timeout);
+// epfd: 是epoll_create()返回的epoll的句柄
+// events: 是内存，也就是数组，长度是 maxevents，表示此次epoll_wait调用可以搜集到的maxevents个事件【】
+// timeout: 等待的时间长度
+// 返回: min(maxevents, ep->rdnum)事件数量
+```
+
+某个 socket 在这个双向链表中，这个 socket 上就一定发生了某个事件，
+只有发生了某个事件的 tcp 连接，才会被扔到这个双向链表中
+
+epoll 为什么搞笑，就是因为每次值遍历了 【发生了事件的】这一小部分 socket
+
+epitem 结构设计的高明之处：既能作为 红黑树的节点，也能作为 双向链表的节点
+
+![epoll](image/epoll.png)
 
 #### 内核 向 双向链表添加节点
 
+四种情况：
+
+1. 客户端完成三次握手，服务器要 accept()
+2. 当客户端关闭连接，服务器要 close()关闭
+3. 当客户端发送来数据，服务器要调用 read()，recv()来接收数据
+4. 当可以发送数据时（防止把客户端噎死），服务器可以调用 send()，write()
+
 #### 源码阅读 额外说明
+
+有许多 加锁机制`pthread_mutex`
+
+## chap - 06 - 通讯代码 epoll 实战 1
+
+### 配置文件的修改
+
+要加一个东西`worker_connections = 1024`，一个 worker 进行允许连接的客户端数。
+当然，实际上我们会限制，如果达到这个数字的 8/9，我们就不会继续接收连接了（这个时候算是饱和了）
+
+### epoll 函数实战
+
+#### ngx_epoll_init 函数内容
+
+epoll_create
+
+连接池：数组，元素数量就是(连接数量 worker_connections)，每个元素为 ngx_connections_t，结构数组。
+
+2 个监听 socket，用户连接进来，每个用户多出来一个 socket，
+把 socket 跟一块内存捆绑，达到的效果就是：将来通过这个 socket，就能够把这块内存拿出来
+
+连接池不只是一个数组，里面的元素还被串起来了，这个实际上是静态数组，
+把空闲的节点之间穿起来。这样在这个连接池中找一个空闲的元素就特别快。
+
+#### lsof
+
+```sh
+lsof -i:80 # 可以查看有哪些进程在监听80端口
+```
+
+#### 同时传递 一个指针 和 二进制位域 的技巧
+
+指针总是偶数的，因为要内存对齐，因此，指针的最后一位总是 0，
+我们可以把这个最后一位保存一点信息。使用指针的时候还原指针即可。
+
+### 小结
+
+1. epoll_create，epoll_ctl
+2. 连接池技巧 ngx_get_connection(), ngx_free_connection
+3. 同时传递 一个指针 和 一个位域
+
+## chap5 - 06 - 通讯代码
+
+### ngx_epoll_process_events
+
+#### 事件驱动
+
+### ngx_epoll_process_events
+
+#### epoll 的两种工作模式
+
+### 总结和测试
+
+### 事件驱动总结
+
+### 一道腾讯后台开发的面试题
+
+<!-- TODO 还有一些每看完，吐了，主要是，太抽象了 -->
