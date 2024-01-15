@@ -1,3 +1,4 @@
+#include <asm-generic/errno-base.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -76,6 +77,12 @@ bool CSocket::ngx_open_listening_sockets()
         int reuseaddr = 1;
         if (setsockopt(isock, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr))) {
             ngx_log_stderr(errno, "CSocket::ngx_open_listening_sockets()中setsockopt()失败, i=%d", i);
+            close(isock);
+            return false;
+        }
+
+        if (setnonblocking(isock) == false) {
+            ngx_log_stderr(errno, "CSocket::ngx_open_listening_sockets()中setnonblocking()失败, i=%d", i);
             close(isock);
             return false;
         }
@@ -240,9 +247,14 @@ int CSocket::ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t
     memset(&ev, 0, sizeof(ev));
 
     if (readevent == 1) {
-        ev.events = EPOLLIN | EPOLLRDHUP; //
+        ev.events = EPOLLIN | EPOLLRDHUP; // EPOLLIN 读事件
     } else {
         // 其他事件类型待处理
+    }
+
+    /* 设置 ET触发 还是 LT触发 */
+    if (otherflag != 0) {
+        ev.events |= otherflag;
     }
 
     // TODO
@@ -254,5 +266,94 @@ int CSocket::ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t
         ngx_log_stderr(errno, "const char *fmt, ...");
         return -1;
     }
+    return 1;
+}
+
+/**
+ * @brief 
+ * 
+ * @param timer 超时
+ * @return int 
+ */
+int CSocket::ngx_epoll_process_events(int timer)
+{
+    int events = epoll_wait(this->m_epollhandle, this->m_events, NGX_MAX_EVENTS, timer);
+    if (events == -1) {
+        if (errno == EINTR) {
+            /* 如果是信号导致的中断 */
+            ngx_log_error_core(NGX_LOG_INFO, errno, "CSocket::ngx_epoll_process_events()中epoll_wait()失败!");
+            return 1;
+        } else {
+            ngx_log_error_core(NGX_LOG_ALERT, errno, "CSocket::ngx_epoll_process_events()中epoll_wait()失败!");
+            return 0;
+        }
+    }
+
+    if (events == 0) { /* 超时，但是没事件来 */
+        if (timer != -1) {
+            return 1;
+        }
+        /* 超时了，但是timer == -1 */
+        ngx_log_error_core(NGX_LOG_ALERT, 0, "CSocket::ngx_epoll_process_events()中epoll_wait()没超时却没返回任何事件!");
+        return 0;
+    }
+
+    for (int i = 0; i < events; ++i) {
+
+        lpngx_connection_t c = (lpngx_connection_t)(this->m_events[i].data.ptr);
+        uintptr_t instance = (uintptr_t)c & 1;
+        c = (lpngx_connection_t)((uintptr_t)c & ~((uintptr_t)1));
+
+        /* 过期事件处理 */
+        if (c->fd == -1) {
+            /* 比方说epoll_wait取得三个事件:
+				处理第一个事件的时候，因为业务需要，我们把这个连接关闭，
+				那么1. 连接池回收节点 2. close(fd) 3. fd = -1
+				第二个事件照常处理
+				第三个事件，假如这第三个事件，也是在第一个事件的socket上发生的，那么这个条件成立;
+					然而我们在第一个事件的时候已经关闭了，这个socket已经废了，属于过期事件。
+			 */
+            ngx_log_error_core(NGX_LOG_DEBUG, 0, "CSocket::ngx_epoll_process_events()中遇到了fd=-1的过期事件:%p.", c);
+
+            /* 跳过过期事件，处理下一个事件 */
+            continue;
+        }
+
+        /* TODO 过期事件处理 */
+        if (c->instance != instance) {
+            /* 比如用epoll_wait取得三件事，
+				a) 处理第一个事件时，我们把连接关闭（假设socket=50），同时设置c.fd=-1并且调用连接池回收
+				b) 处理第二个事件时，恰好第二个事件时建立新连接的事件，调用ngx_get_connection从连接池中取出新连接
+				c) 因为a中socket=50被释放了，所以操作系统拿来复用; 这里 c新连接，不仅复用了连接（连接池），也复用socket
+				d) 
+
+			*/
+            ngx_log_error_core(NGX_LOG_DEBUG, 0, "CSocket::ngx_epoll_process_events()中遇到了instance值改变的过期事件:%p.", c);
+            continue;
+        }
+
+        /* revents = 获取 epoll 返回的事件类型 */
+        uint32_t revents = this->m_events[i].events;
+
+        /* epoll_err 表示发生了错误，epoll_hup 表示发生了 挂起 或者 断开连接 */
+        if (revents & (EPOLLERR | EPOLLHUP)) {
+            /* 如果发生了错误或者挂起，那么也能处理 读事件 和 写事件 */
+            revents |= EPOLLIN | EPOLLOUT;
+        }
+
+        /* 检查是否有EPOLLIN， */
+        if (revents & EPOLLIN) {
+            /* CSocket::ngx_event_accept --> listen */
+            /* CSocket::ngx_wait_request_handler --> 非 listen */
+            auto p_func = c->rhandler; // 函数成员指针
+            (this->*p_func)(c);
+        }
+
+        if (revents & EPOLLOUT) {
+            // TODO ... 待扩展
+            ngx_log_stderr(errno, "1111111111111");
+        }
+
+    } // end for (int i = 0; i < events; ++i)
     return 1;
 }

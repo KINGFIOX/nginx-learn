@@ -44,7 +44,7 @@ struct ngx_connection_s {
     lpngx_listening_t listening;
 
     unsigned instance : 1; // 位域：0有效，1失效
-    uint64_t iCurrsequence; // TODO
+    uint64_t iCurrsequence; // 时间戳：分配的时候++、释放的时候++
 
     struct sockaddr s_sockaddr;
     // char addr_text[100]; // 地址的文本信息
@@ -82,7 +82,8 @@ public:
     // epoll增加事件
     int ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t otherflag, uint32_t eventtype, lpngx_connection_t c);
 
-    int epoll_process_events(int timer); // epoll等待接收和处理事件
+    // epoll等待接收和处理事件
+    int ngx_epoll_process_events(int timer);
 
 private:
     // 读配置
@@ -96,21 +97,20 @@ private:
     // 设置非阻塞socket
     bool setnonblocking(int sockfd);
 
-    /**/
+    /*  */
     void ngx_event_accept(lpngx_connection_t oldc);
+
+    /*  */
+    void ngx_wait_request_handler(lpngx_connection_t c);
 
     /*  */
     void ngx_close_accepted_connection(lpngx_connection_t c);
 
-    //
-    void ngx_wait_request_handler(lpngx_connection_t c);
-
     size_t ngx_sock_ntop(struct sockaddr* sa, int port, u_char* text, size_t len);
 
-    /* 归还给连接池 */
-    void ngx_free_connection(lpngx_connection_t c);
-
+    /* 连接池相关操作 */
     lpngx_connection_t ngx_get_connection(int isock);
+    void ngx_free_connection(lpngx_connection_t c);
 
 private:
     /* 连接池相关 */
@@ -120,14 +120,13 @@ private:
     int m_ListenPortCount; // 监听的端口数量
 
     lpngx_connection_t m_pconnections;
+    lpngx_connection_t m_pfree_connections; /* 连接池中，下一个空闲的位置 */
 
     // lpngx_event_t m_pread_events;
     // lpngx_event_t m_pwrite_events;
 
     int m_connection_n; /* 连接池的大小 */
-
     int m_free_connection_n; /* 连接池中有多少位置是空闲的 */
-    lpngx_connection_t m_pfree_connections; /* 连接池中，下一个空闲的位置 */
 
     std::vector<lpngx_listening_t> m_ListenSocketList; // 监听socket队列
 

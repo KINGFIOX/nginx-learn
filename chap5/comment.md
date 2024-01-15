@@ -485,3 +485,150 @@ int main() {
 
 需要注意的是，操作系统和编译器通常允许开发者通过特定的指令和属性来覆盖默认的内存对齐模数。
 这在处理特定硬件接口或者优化性能时可能很有用。
+
+### epoll 如何知道 事件被处理了 ？
+
+在使用 `epoll` 的默认行为，即水平触发（Level Triggered, LT）模式时，
+`epoll_wait` 会不停地通知你有事件发生，直到你处理了这些事件。
+实际上，`epoll` 并不知道你是否调用了处理函数；它只关心文件描述符的状态。
+
+在水平触发模式下，如果某个文件描述符上有可读写事件发生，
+并且你没有读取数据或者没有写入足够的数据到缓冲区（因此缓冲区仍然是满的或空的），
+`epoll_wait` 在下次被调用时还会报告这个文件描述符上有相同的事件。
+这意味着如果你不处理这些事件（例如，对于 `EPOLLIN`，你不读取数据；对于 `EPOLLOUT`，你不写入数据），
+`epoll_wait` 将会不断地返回这个文件描述符，因为从 `epoll` 的角度来看，这个事件一直处于触发状态。
+
+这里是处理 `epoll` 事件的一个简化的例子：
+
+```c
+struct epoll_event events[MAX_EVENTS];
+
+// Assume epoll_fd is the file descriptor for the epoll instance
+while (true) {
+    int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+
+    if (nfds == -1) {
+        if (errno == EINTR) {
+            // Interrupted by a signal, continue the loop
+            continue;
+        } else {
+            // Handle other errors
+            perror("epoll_wait");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    for (int n = 0; n < nfds; ++n) {
+        int fd = events[n].data.fd;
+
+        // Check if the file descriptor is ready for reading
+        if (events[n].events & EPOLLIN) {
+            // Handle the read event
+            ssize_t count;
+            char buf[BUF_SIZE];
+
+            // It's important to actually perform the read operation here
+            count = read(fd, buf, sizeof buf);
+
+            if (count == -1) {
+                // If errno == EAGAIN, that means we have read all data.
+                if (errno != EAGAIN) {
+                    perror("read");
+                    // Handle read error
+                }
+                continue;
+            } else if (count == 0) {
+                // End of file. The remote has closed the connection.
+                close(fd);
+            }
+
+            // Process the read data contained in 'buf'
+        }
+
+        // Similarly, handle other event types like EPOLLOUT, EPOLLERR, etc.
+    }
+}
+```
+
+在上面的代码中，一旦 `epoll_wait` 返回，并且报告 `EPOLLIN`（可读事件），
+代码就会尝试从文件描述符读取数据。你必须确保实际从文件描述符读取数据，
+否则 `epoll_wait` 会不断地报告该文件描述符上有可读事件。
+
+同样的逻辑适用于写事件（`EPOLLOUT`）。
+如果你不实际写入数据到输出缓冲区，
+或者没有写入足够的数据使得缓冲区不再是满的，
+`epoll_wait` 会继续报告可写事件。
+
+总之，`epoll` 不知道你是否调用了处理函数，
+但它会基于文件描述符的状态不断通知你。
+因此，你需要确保在接收到事件通知后，
+正确地处理这些事件（如读取或写入数据），
+以避免 `epoll_wait` 持续不断地返回相同的事件。
+
+### epoll_wait 返回后，过滤过期事件（时间戳）
+
+`epoll_wait` 返回后，它提供的事件是根据最新的文件描述符状态来报告的。由于 `epoll` 是基于事件的机制，理论上它不会返回过期的事件——即它返回的事件应该反映了文件描述符在 `epoll_wait` 被调用时刻的实时状态。
+
+然而，实际编程中可能出现以下情况，你可能认为某些事件是 "过期" 的：
+
+1. **事件已经被处理**
+
+如果你在多个线程中处理 `epoll` 事件，
+可能一个线程已经处理了某个文件描述符上的事件，
+而 `epoll_wait` 在另一个线程中又返回了相同的文件描述符。
+这种情况可以通过设计合理的同步机制来避免，
+比如使用线程安全的队列存储待处理的文件描述符。
+
+2. **文件描述符状态改变**
+
+如果事件通知之后，文件描述符的状态改变了（例如，通过另一个线程），
+你可能会认为 `epoll_wait` 返回的事件已经不再相关。
+处理这种情况的一种方法是在处理事件之前再次检查文件描述符的状态。
+
+3. **边缘触发（ET）模式下的事件遗漏**
+
+在边缘触发模式下，如果你没有读取或写入所有数据，`epoll_wait` 可能不会再次通知你。
+这不是事件 "过期"，而是事件被遗漏了。
+为了避免这种情况，你需要确保在边缘触发模式下读取或写入直到返回 `EAGAIN` 错误。
+
+如果你确实需要过滤掉某些事件，你需要在你的应用程序逻辑中实现这一机制。
+这通常涉及到跟踪你的应用程序的状态，并在处理事件时检查这些状态。以下是一种可能的策略：
+
+- **时间戳检查**
+
+为每个文件描述符关联一个时间戳，当你处理一个事件时，更新该时间戳。当 `epoll_wait` 返回相同的文件描述符时，检查时间戳，如果事件的时间戳早于你期望的时间，你可以认为这个事件是 "过期" 的，跳过处理。
+
+这是一个示例伪代码，展示如何实现时间戳检查：
+
+```c
+// 假设每个文件描述符都关联了一个时间戳结构体
+typedef struct {
+    int fd;
+    uint64_t last_processed_time;
+} fd_state;
+
+fd_state fds[MAX_FDS];
+
+// 初始化 fds ...
+
+while (running) {
+    int n = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+    for (int i = 0; i < n; i++) {
+        int fd = events[i].data.fd;
+        uint64_t current_time = get_current_time(); // 获取当前时间的函数
+
+        if (fds[fd].last_processed_time < current_time) {
+            // 处理事件
+            process_event(events[i]);
+
+            // 更新该文件描述符的时间戳
+            fds[fd].last_processed_time = current_time;
+        } else {
+            // 事件可能是"过期"的，跳过处理
+        }
+    }
+}
+```
+
+请注意，上述示例是一种简化的表示，并不适用于所有场景。在多线程环境中，你需要确保对文件描述符状态的访问是线程安全的。
+此外，确保时间戳的精度和更新机制与你的应用程序的需求相匹配是非常重要的。
