@@ -10,7 +10,7 @@
 #include "ngx_global.h"
 #include "ngx_macro.h"
 
-// 初始化全局变量 ----------------
+// 设置进程标题的 全局变量 ----------------
 size_t g_argvneedmem = 0;
 size_t g_envneedmem = 0;
 int g_os_argc;
@@ -23,7 +23,7 @@ pid_t ngx_pid;
 pid_t ngx_parent;
 int ngx_process;
 
-// 标记子进程的状态 -------------
+// 标记子进程的状态变化 -------------
 sig_atomic_t ngx_reap;
 
 // socket相关 ----------------

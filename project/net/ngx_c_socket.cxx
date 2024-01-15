@@ -46,7 +46,12 @@ CSocket::~CSocket()
     return;
 }
 
-// 监听所有的端口
+/**
+ * @brief 从配置中读取 要监听的端口，并添加到监听队列中
+ * 
+ * @return true 
+ * @return false 
+ */
 bool CSocket::ngx_open_listening_sockets()
 {
 
@@ -114,7 +119,13 @@ bool CSocket::ngx_open_listening_sockets()
     return true;
 }
 
-// 把 sockfd 对应的 socket 连接设置为非阻塞模式
+/**
+ * @brief 把 sockfd 对应的 socket 连接设置为非阻塞模式
+ * 
+ * @param sockfd 
+ * @return true 
+ * @return false 
+ */
 bool CSocket::setnonblocking(int sockfd)
 {
     int nb = 1; // 0清除，1设置
@@ -157,6 +168,11 @@ void CSocket::ReadConf()
     return;
 }
 
+/**
+ * @brief 初始化epoll，创建连接池，将监听fd 一直保存在连接池中
+ * 
+ * @return int 
+ */
 int CSocket::ngx_epoll_init()
 {
     // ---（1）创建 epoll，返回一个句柄 epoll_fd
@@ -184,19 +200,21 @@ int CSocket::ngx_epoll_init()
     this->m_pfree_connections = next;
     this->m_free_connection_n = m_connection_n;
 
-    // ---（3）遍历所有监听socket，为每个监听 socket 与一段内存绑定
+    // ---（3）将监听连接一直保存在 连接池 中
     for (auto v : m_ListenSocketList) {
-        lpngx_connection_t c = ngx_get_connection(v->fd); // 从连接池中获取一个空闲连接对象 /* TODO */
+        lpngx_connection_t c = ngx_get_connection(v->fd); // 从连接池中获取一个空闲连接对象
         if (c == NULL) {
             ngx_log_stderr(errno, "const char *fmt, ...");
             exit(2); // 致命错误，直接退出
         }
+
+        /* 连接对象 与 监听对象 关联 */
         c->listening = v;
         v->connection = c;
 
-        c->rhandler = &CSocket::ngx_event_accept; // TODO
+        c->rhandler = &CSocket::ngx_event_accept; /* 对于 listenfd，那么他的处理函数设置为 添加新连接 */
 
-        // 往epoll上添加敏感事件
+        // 往红黑树中 添加 敏感事件
         if (ngx_epoll_add_event(v->fd, 1, 0, 0, EPOLL_CTL_ADD, c) == -1) {
             exit(2);
         }
@@ -209,11 +227,11 @@ int CSocket::ngx_epoll_init()
  * @brief 对红黑树操作
  * 
  * @param fd 添加到红黑树上 敏感事件 的 socket fd
- * @param readevent 
- * @param writeevent 
+ * @param readevent 是否对 读事件 敏感
+ * @param writeevent 是否对 写事件 敏感
  * @param otherflag // TODO 好像暂时没用到
  * @param eventtype  对红黑树的三种操作：ADD MOD DEL
- * @param c 
+ * @param c 连接信息
  * @return int 
  */
 int CSocket::ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t otherflag, uint32_t eventtype, lpngx_connection_t c)
@@ -221,13 +239,14 @@ int CSocket::ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
 
-    if (readevent == -1) {
+    if (readevent == 1) {
         ev.events = EPOLLIN | EPOLLRDHUP; //
     } else {
         // 其他事件类型待处理
     }
 
     // TODO
+    /* 这里的 ev.data 只会表现ptr的特征，union，这个ev会在epoll_wait的时候 收回片头 */
     ev.data.ptr = (void*)((uintptr_t)c | c->instance);
 
     //

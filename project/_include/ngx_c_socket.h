@@ -12,6 +12,7 @@
 #define NGX_MAX_EVENTS 512 /* epoll 一次最多接收这么多事件 */
 
 // 先取一些类型别名 ------------------
+
 /* 与监听队列有关的 */
 typedef struct ngx_listening_s ngx_listening_t, *lpngx_listening_t;
 
@@ -22,21 +23,29 @@ typedef class CSocket CSocket;
 // 定义成员函数指针
 typedef void (CSocket::*ngx_event_handler_pt)(lpngx_connection_t c);
 
+/**
+ * @brief 监听相关的信息
+ * @port 监听的端口号
+ * @fd 
+ */
 struct ngx_listening_s {
     int port; // 监听的端口号
     int fd; // socket句柄
     lpngx_connection_t connection; // 连接池的一项连接
 };
 
-// 该结构体表示一个tcp连接
-/*
-    就是我们服务器会打开两个socket，一个是listen，还有一个就是这个客户端连接的socket了
-*/
+/**
+ * @brief 连接池中，元素的结构体，保存着一些数据。
+			有了连接池的存在，这段内存就不用重新开辟
+ * @listening 被谁监听的
+ */
 struct ngx_connection_s {
     int fd;
     lpngx_listening_t listening;
+
     unsigned instance : 1; // 位域：0有效，1失效
-    uint64_t iCurrsequence; // 具体用法，用到了再说
+    uint64_t iCurrsequence; // TODO
+
     struct sockaddr s_sockaddr;
     // char addr_text[100]; // 地址的文本信息
 
@@ -79,12 +88,6 @@ private:
     // 读配置
     void ReadConf();
 
-    /**
-	 * @brief 从配置中读取 要监听的端口，并添加到监听队列中
-	 * 
-	 * @return true 
-	 * @return false 
-	 */
     bool ngx_open_listening_sockets();
 
     // 关闭监听socket
@@ -107,15 +110,15 @@ private:
     /* 归还给连接池 */
     void ngx_free_connection(lpngx_connection_t c);
 
-    /* 从连接池里面取元素 */
     lpngx_connection_t ngx_get_connection(int isock);
 
 private:
+    /* 连接池相关 */
+
     int m_epollhandle;
     int m_worker_connections; /* 每个worker最多连接数  */
     int m_ListenPortCount; // 监听的端口数量
 
-    /* 连接池相关 */
     lpngx_connection_t m_pconnections;
 
     // lpngx_event_t m_pread_events;
@@ -130,4 +133,5 @@ private:
 
     struct epoll_event m_events[NGX_MAX_EVENTS];
 };
+
 #endif

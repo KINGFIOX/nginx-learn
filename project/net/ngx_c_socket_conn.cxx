@@ -17,6 +17,11 @@
 #include "ngx_global.h"
 #include "ngx_macro.h"
 
+/**
+ * @brief 释放连接，空闲链表头插
+ * 
+ * @param c 
+ */
 void CSocket::ngx_free_connection(lpngx_connection_t c)
 {
     /* c.data = m_pfree_connections */
@@ -31,6 +36,12 @@ void CSocket::ngx_free_connection(lpngx_connection_t c)
     return;
 }
 
+/**
+ * @brief 获取连接，空闲链表头删
+ * 
+ * @param isock 
+ * @return lpngx_connection_t 
+ */
 lpngx_connection_t CSocket::ngx_get_connection(int isock)
 {
     /* 空闲链表表头 */

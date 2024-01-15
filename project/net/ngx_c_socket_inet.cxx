@@ -22,12 +22,12 @@
 #include "ngx_macro.h"
 
 /**
- * @brief 网络地址结构体 --> 
+ * @brief 网络地址结构体 --> 将 ip:port 写入 text
  * 
  * @param sa 保存有客户端的ip地址
  * @param port 1: 端口信息也放到组合成的字符串; 0：则不包含端口信息
- * @param text 
- * @param len 
+ * @param text 写入缓冲区
+ * @param len 缓冲区可写入长度
  * @return size_t ip:port的长度
  */
 size_t ngx_sock_ntop(struct sockaddr* sa, int port, u_char* text, size_t len)

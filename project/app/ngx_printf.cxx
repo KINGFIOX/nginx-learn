@@ -232,7 +232,7 @@ u_char* ngx_vslprintf(u_char* buf, u_char* last, const char* fmt, va_list args)
  * @brief 这个是ngx_vslprintf的封装
  *
  * @param buf
- * @param last
+ * @param last buf 缓冲区的 最后位置
  * @param fmt
  * @param ...
  * @return u_char* 返回下一个可写入的位置
@@ -249,6 +249,15 @@ u_char* ngx_slprintf(u_char* buf, u_char* last, const char* fmt, ...)
     return p;
 }
 
+/**
+ * @brief 这个是 ngx_vslprintf的封装
+ * 
+ * @param buf 
+ * @param max 最多可写入max的字节
+ * @param fmt 
+ * @param ... 
+ * @return u_char* 
+ */
 u_char* ngx_snprintf(u_char* buf, size_t max, const char* fmt, ...)
 {
     u_char* p;

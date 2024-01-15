@@ -23,7 +23,7 @@
 #include "ngx_macro.h"
 
 /**
- * @brief 
+ * @brief 回收连接池中的连接，不然连接池很快就耗光了
  * 
  * @param c 
  */
@@ -39,59 +39,73 @@ void CSocket::ngx_close_accepted_connection(lpngx_connection_t c)
 }
 
 /**
- * @brief 建立新连接的专用函数，当新链接进入时，本函数会被ngx_epoll_process_events()调用  // TODO
+ * @brief 添加新连接，并加入到红黑树中
  * 
- * @param lodc 
+ * @param oldc 监听socket 对应的 ngx_connection_t 对象（内存）
  */
 void CSocket::ngx_event_accept(lpngx_connection_t oldc)
 {
-    struct sockaddr mysockaddr;
-    socklen_t socklen;
-    int err;
-    int level;
     int s;
-    static int use_accept4 = 1;
-    lpngx_connection_t newc;
+    static int use_accept4 = 1; // 默认使用use_accept4
 
-    socklen = sizeof(mysockaddr);
+    socklen_t socklen = sizeof(struct sockaddr);
     do {
+        struct sockaddr mysockaddr;
         if (use_accept4) {
-            accept4(oldc->fd, &mysockaddr, &socklen, SOCK_NONBLOCK);
+            /* 非阻塞socket，不管有没有客户端连接，直接返回 */
+            s = accept4(oldc->fd, &mysockaddr, &socklen, SOCK_NONBLOCK);
         } else {
+            /* 相当于accept4的flags=0 */
             s = accept(oldc->fd, &mysockaddr, &socklen);
         }
 
+        /* 进入错误处理阶段 */
         if (s == -1) {
-            err = errno;
-            if (err == EAGAIN) {
+            int err = errno;
+            if (err == EAGAIN) { /* 已完成连接队列中，没有用户了，然而我这里是 非阻塞的，就会发生这个错误 */
                 return;
             }
+            int level = NGX_LOG_ALERT; // 错误等级
+
             if (err == ECONNABORTED) {
+                /* 客户端在连接被接受之前终止 */
                 level = NGX_LOG_ERR;
-            } else if (err == EMFILE || err == ENFILE) {
+            } else if (err == EMFILE || err == ENFILE) { /* 连入的用户太多了 */
+                /* EMFILE: fd的数量已经达到了 进程的上限; ENFILE: fd的数量已经达到了 系统的上限 */
                 level = NGX_LOG_CRIT;
             }
             ngx_log_error_core(level, errno, "CSocket::ngx_event_accept()中accept4()失败!");
+
+            /* enosys: invalid system call，系统没有实现accept4，坑爹，改用accept */
             if (use_accept4 && err == ENOSYS) {
                 use_accept4 = 0;
                 continue;
             }
+
+            /* 对方关闭socket */
+            if (err == ECONNABORTED) {
+                /* TODO 可以啥也不用做，当然也可以写日志 */
+            }
+
             if (err == EMFILE || err == ENFILE) {
                 // TODO do sth.
             }
             return;
         } // end if (s == -1)
 
-        newc = ngx_get_connection(s);
-        if (newc == NULL) {
+        lpngx_connection_t newc = ngx_get_connection(s);
+        if (newc == NULL) { /* 连接池满了 */
             if (close(s) == -1) {
                 ngx_log_error_core(NGX_LOG_ALERT, errno, "CSocket::ngx_event_accept()中close(%d)失败!", s);
             }
             return;
         }
+
+        /* 一股脑拷贝 */
         memcpy(&newc->s_sockaddr, &mysockaddr, socklen);
 
         if (!use_accept4) {
+            /* 如果不是 accept4，手动设置非阻塞 */
             if (setnonblocking(s) == false) {
                 ngx_close_accepted_connection(newc);
                 return;
@@ -99,15 +113,21 @@ void CSocket::ngx_event_accept(lpngx_connection_t oldc)
         }
 
         newc->listening = oldc->listening;
-        newc->w_ready = 1;
-        newc->rhandler = &CSocket::ngx_wait_request_handler;
+        newc->w_ready = 1; /* 准备好写数据了 */
+        newc->rhandler = &CSocket::ngx_wait_request_handler; /* 读取到数据改如何处理 */
 
-        if (ngx_epoll_add_event(s, 1, 0, EPOLLET, EPOLL_CTL_ADD, newc) == -1) {
+        /* 红黑树中添加敏感事件 */
+        if (ngx_epoll_add_event(s,
+                1, /* 默认client连接进来是可读的，因为是客户端主动连接的，这个肯定是客户端有求于服务器 */
+                0,
+                EPOLLET, /* epoll_et 边缘触发 */
+                EPOLL_CTL_ADD,
+                newc)
+            == -1) {
             ngx_close_accepted_connection(newc);
             return;
         }
 
-        break;
-
+        break; /* 这种 while(1) + break 写法还是挺有意思的 */
     } while (1);
 }

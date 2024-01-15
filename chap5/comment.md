@@ -16,7 +16,7 @@ if (epollfd == -1) {
 王健伟老师的教程中，创建 epoll 使用的是`int epoll_create(int size);`。
 然而，这里的`int size`实际上已经失去了原本的含义了，只要是`size > 0`即可
 
-### struct_event
+### struct epoll_event
 
 定义
 
@@ -51,6 +51,36 @@ struct epoll_event {
         /* last cacheline: 16 bytes */
 };
 ```
+
+`struct epoll_event` 是 Linux 系统中 `epoll` API 所定义的一个结构体，
+它用于表示对 `epoll` 实例感兴趣的事件类型以及这些事件相关联的数据。
+
+`epoll` 是 Linux 提供的多路复用输入/输出（I/O）系统调用接口，
+它允许程序监视多个文件描述符以等待某个文件描述符上的 I/O 事件发生，如可读、可写或错误等。
+`epoll` 比传统的 `select` 或 `poll` 系统调用更加高效，因为它能够更好地扩展到大量文件描述符。
+
+- `events` 成员用于指定感兴趣的事件类型和一些额外的条件。它可以是以下一种或多种的位集合：
+
+  - `EPOLLIN`：表示对应的文件描述符可读（包括对等方关闭连接的情况）。
+  - `EPOLLOUT`：表示对应的文件描述符可写。
+  - `EPOLLRDHUP`：表示对等方关闭了连接，或者关闭了写操作。
+  - `EPOLLPRI`：表示对应的文件描述符有紧急的数据可读（如 TCP socket 的带外数据）。
+  - `EPOLLERR`：表示对应的文件描述符发生了错误。
+  - `EPOLLHUP`：表示对应的文件描述符被挂断。
+  - `EPOLLET`：将 EPOLL 设为边缘触发（Edge Triggered）模式，这意味着它只会通知有状态改变的事件。
+  - `EPOLLONESHOT`：表示对应的文件描述符只会报告一次事件，之后需要重新设置。
+
+- `data` 成员是一个用户自定义的数据，用于存储某些与事件相关联的额外信息。
+  这可以是一个指针、一个文件描述符、一个 32 位整数或一个 64 位整数。
+  在事件发生时，可以从 `epoll_wait` 调用返回的事件数组中取回这个数据，
+  这常用于回调函数或者是与文件描述符相关联的对象。
+
+当你使用 `epoll_ctl` 函数将文件描述符添加到 `epoll` 实例时，
+你会提供一个指向 `struct epoll_event` 的指针，
+以告诉 `epoll` 你对哪些事件感兴趣，以及与这些事件相关联的用户数据。
+随后，当你调用 `epoll_wait` 函数等待事件发生时，
+`epoll` 会返回一个 `struct epoll_event` 类型的数组，
+其中包含了实际发生的事件以及你之前提供的用户数据。
 
 ### 存放在 红黑树上 ？ 还是 双向链表上 ？
 
@@ -378,3 +408,80 @@ default:
     break;
 }
 ```
+
+### accept4
+
+`accept4` 是一个在某些类 Unix 系统（如 Linux）中提供的系统调用，它是 `accept` 系统调用的扩展版本。
+`accept` 函数用于在一个监听的套接字上接受一个新的连接请求，而 `accept4` 除了具有 `accept` 的功能外，
+还允许在接受连接时指定额外的标志。
+
+```c
+// 这个是accept的原型，可以看到，accept4比accept多了一个flags
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+```
+
+`accept4` 的函数原型如下（在 Linux 中定义）：
+
+```c
+int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags);
+```
+
+这个函数的参数包括：
+
+- `sockfd` 是一个 listen fd
+- `addr` 是一个指向 `sockaddr` 结构体的指针，用于返回接受的连接的远程端地址信息。
+- `addrlen` 是一个指向 `socklen_t` 类型的指针，在调用之前，它应该被初始化为指向的缓冲区的大小。调用完成后，这个值被设置为实际地址结构的大小。也就是`sizeof(struct sockaddr)`
+- `flags` 是一个整数，用于指定一些特殊操作。这些标志可以是以下值的位或（bitwise OR）：
+  - `SOCK_NONBLOCK` 设置返回的文件描述符为非阻塞模式。
+  - `SOCK_CLOEXEC` 设置返回的文件描述符在执行 exec 系列函数时关闭（即设置 close-on-exec 标志）。
+
+在没有 `accept4` 函数的系统中，如果你想要设置返回的套接字为非阻塞或者设置 close-on-exec 标志，
+你需要在 `accept` 调用之后分别调用 `fcntl` 函数来设置这些属性。`accept4` 允许你直接在接受新连接的同时设置这些属性，
+这样可以减少系统调用的次数，并且避免了多线程环境下的潜在竞争条件。
+
+举个简单的例子：
+
+```c
+int new_socket = accept4(listen_socket, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+```
+
+在这个例子中，`accept4` 创建了一个新的非阻塞套接字，并且设置了 close-on-exec 标志，
+这意味着这个新的套接字在程序调用 exec 函数替换当前进程映像时会被关闭。
+
+### 心得
+
+vscode 中，可以通过`shift + f12`，查看一个函数在哪里被引用
+
+### 内存对齐模数
+
+实际上，"内存魔术"这个词可能是一个误解或者是一个打字错误。在内存对齐的上下文中，我们通常讨论的是"内存对齐模数"（alignment modulus），它是指数据类型在内存中存储时地址对齐的基数。默认的内存对齐模数通常取决于你的编译器和目标平台的架构。
+
+要确定你的系统或某个特定数据类型的默认内存对齐模数，你可以使用编程语言提供的工具或函数。例如，在 C 或 C++中，你可以使用`alignof`或`_Alignof`运算符来获取一个类型的对齐要求：
+
+```c
+#include <stdio.h>
+
+int main() {
+    printf("The alignment of 'int' is: %zu\n", alignof(int));
+    printf("The alignment of 'double' is: %zu\n", alignof(double));
+    printf("The alignment of a 'struct' is: %zu\n", alignof(struct { char c; int i; }));
+
+    return 0;
+}
+```
+
+在 C++中，`alignof`是关键字，而在 C11 中，`_Alignof`是运算符。
+
+如果你想要获取更一般的系统级的内存对齐模数信息，这通常是由 CPU 的架构决定的。
+大多数现代的 x86 和 x64 架构处理器在硬件层面上支持不同的对齐模数，
+但在软件层面，编译器通常会选择一个默认的对齐模数，这个值往往是 8 或 16。
+这个值是一个平衡内存使用和性能的结果。
+
+如果你使用的是 GCC 或 Clang，你可以通过编译器的文档或者使用特定的编译器标志来获取对齐信息。
+例如，GCC 有一个`-Wpadded`标志，它会警告你关于结构体的填充和可能的对齐问题。
+
+还有，如果你使用的是特定的 IDE 或者开发工具，
+它们可能会有自己的方法来显示或设置默认的内存对齐模数。
+
+需要注意的是，操作系统和编译器通常允许开发者通过特定的指令和属性来覆盖默认的内存对齐模数。
+这在处理特定硬件接口或者优化性能时可能很有用。

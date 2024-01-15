@@ -11,16 +11,6 @@ void Ltrim(char* string);
 // 格式化字符串 ---------
 u_char* ngx_vslprintf(u_char* buf, u_char* last, const char* fmt, va_list args);
 u_char* ngx_slprintf(u_char* buf, u_char* last, const char* fmt, ...);
-
-/**
- * @brief 输出到 buf 中
- * 
- * @param buf 
- * @param max 
- * @param fmt 
- * @param ... 
- * @return u_char* 返回下一个可写入的位置
- */
 u_char* ngx_snprintf(u_char* buf, size_t max, const char* fmt, ...);
 
 // 日志 ---------------

@@ -12,7 +12,7 @@
 #define NGX_LOG_STDERR 0 // 控制台错误【stderr】：最高级别日志，日志的内容不再写入log参数指定的文件，而是会直接将日志输出到标准错误设备比如控制台屏幕
 #define NGX_LOG_EMERG 1 // 紧急 【emerg】
 #define NGX_LOG_ALERT 2 // 警戒 【alert】
-#define NGX_LOG_CRIT 3 // 严重 【crit】
+#define NGX_LOG_CRIT 3 // 严重 【critical】
 #define NGX_LOG_ERR 4 // 错误 【error】：属于常用级别
 #define NGX_LOG_WARN 5 // 警告 【warn】：属于常用级别
 #define NGX_LOG_NOTICE 6 // 注意 【notice】
