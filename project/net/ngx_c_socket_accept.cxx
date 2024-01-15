@@ -120,7 +120,7 @@ void CSocket::ngx_event_accept(lpngx_connection_t oldc)
         if (ngx_epoll_add_event(s,
                 1, /* 默认client连接进来是可读的，因为是客户端主动连接的，这个肯定是客户端有求于服务器 */
                 0,
-                EPOLLET, /* epoll_et 边缘触发 */
+                0, /* epoll_et 边缘触发，0: 默认使用 LT 模式 */
                 EPOLL_CTL_ADD,
                 newc)
             == -1) {

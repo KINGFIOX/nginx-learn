@@ -236,7 +236,7 @@ int CSocket::ngx_epoll_init()
  * @param fd 添加到红黑树上 敏感事件 的 socket fd
  * @param readevent 是否对 读事件 敏感
  * @param writeevent 是否对 写事件 敏感
- * @param otherflag // TODO 好像暂时没用到
+ * @param otherflag // ET 还是 LT ？
  * @param eventtype  对红黑树的三种操作：ADD MOD DEL
  * @param c 连接信息
  * @return int 
@@ -322,11 +322,11 @@ int CSocket::ngx_epoll_process_events(int timer)
         /* TODO 过期事件处理 */
         if (c->instance != instance) {
             /* 比如用epoll_wait取得三件事，
-				a) 处理第一个事件时，我们把连接关闭（假设socket=50），同时设置c.fd=-1并且调用连接池回收
-				b) 处理第二个事件时，恰好第二个事件时建立新连接的事件，调用ngx_get_connection从连接池中取出新连接
-				c) 因为a中socket=50被释放了，所以操作系统拿来复用; 这里 c新连接，不仅复用了连接（连接池），也复用socket
-				d) 
-
+					a) 处理第一个事件时，我们把连接关闭（假设socket=50），同时设置c.fd=-1并且调用连接池回收
+					b) 处理第二个事件时，恰好第二个事件时建立新连接的事件，调用ngx_get_connection从连接池中取出新连接
+					c) 因为a中socket=50被释放了，所以操作系统拿来复用; 这里 c新连接，不仅复用了连接（连接池），也复用socket
+					d) 这里过期的含义就是：这块内存 以及 socket已经只是原本的东西了。
+				这里 instance 是在 有新连接的时候，进行了翻转，判断：你已经不是原来的你了。但是，万一出现了 空翻 呢？
 			*/
             ngx_log_error_core(NGX_LOG_DEBUG, 0, "CSocket::ngx_epoll_process_events()中遇到了instance值改变的过期事件:%p.", c);
             continue;

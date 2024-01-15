@@ -64,7 +64,7 @@ lpngx_connection_t CSocket::ngx_get_connection(int isock)
 
     // ... 其他内容再增加
 
-    c->instance = !instance; // 取反，有效 <--> 无效
+    c->instance = !instance; // instance 翻转
     c->iCurrsequence = iCurrsequence;
     ++c->iCurrsequence;
 
