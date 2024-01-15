@@ -1,5 +1,6 @@
 // 用来存放：各种 与 打印格式相关的函数
 
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <sys/types.h>
@@ -67,7 +68,15 @@ static u_char* ngx_sprintf_num(u_char* buf, u_char* last, uint64_t ui64, u_char 
     return ngx_cpymem(buf, p, len);
 }
 
-// 写的最终位置不能超过
+/**
+ * @brief 格式化字符串
+ * 
+ * @param buf 
+ * @param last 
+ * @param fmt 
+ * @param args 
+ * @return u_char* 返回下一个可写入的位置
+ */
 u_char* ngx_vslprintf(u_char* buf, u_char* last, const char* fmt, va_list args)
 {
 
@@ -226,7 +235,7 @@ u_char* ngx_vslprintf(u_char* buf, u_char* last, const char* fmt, va_list args)
  * @param last
  * @param fmt
  * @param ...
- * @return u_char*
+ * @return u_char* 返回下一个可写入的位置
  */
 u_char* ngx_slprintf(u_char* buf, u_char* last, const char* fmt, ...)
 {
@@ -237,5 +246,15 @@ u_char* ngx_slprintf(u_char* buf, u_char* last, const char* fmt, ...)
     p = ngx_vslprintf(buf, last, fmt, args);
     va_end(args);
 
+    return p;
+}
+
+u_char* ngx_snprintf(u_char* buf, size_t max, const char* fmt, ...)
+{
+    u_char* p;
+    va_list args;
+    va_start(args, fmt);
+    p = ngx_vslprintf(buf, buf + max, fmt, args);
+    va_end(args);
     return p;
 }

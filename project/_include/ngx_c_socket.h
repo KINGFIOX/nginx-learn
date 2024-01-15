@@ -12,7 +12,10 @@
 #define NGX_MAX_EVENTS 512 /* epoll 一次最多接收这么多事件 */
 
 // 先取一些类型别名 ------------------
+/* 与监听队列有关的 */
 typedef struct ngx_listening_s ngx_listening_t, *lpngx_listening_t;
+
+/* 与连接池有关的 */
 typedef struct ngx_connection_s ngx_connection_t, *lpngx_connection_t;
 typedef class CSocket CSocket;
 
@@ -43,7 +46,8 @@ struct ngx_connection_s {
     ngx_event_handler_pt rhandler; // 读的相关处理方法
     ngx_event_handler_pt whandler; // 写的相关处理方法
 
-    lpngx_connection_t data; // 静态链表指针，空闲链串起来
+    /* 相当于是 next，空闲链 */
+    lpngx_connection_t data;
 };
 
 /*
@@ -61,6 +65,7 @@ public:
     virtual bool Initialize();
 
 public:
+    //
     int ngx_epoll_init();
 
     // void ngx_epoll_listenportstart();  // 监听端口开始工作
@@ -74,7 +79,12 @@ private:
     // 读配置
     void ReadConf();
 
-    // 监听必须的端口，支持多端口
+    /**
+	 * @brief 从配置中读取 要监听的端口，并添加到监听队列中
+	 * 
+	 * @return true 
+	 * @return false 
+	 */
     bool ngx_open_listening_sockets();
 
     // 关闭监听socket
@@ -83,33 +93,41 @@ private:
     // 设置非阻塞socket
     bool setnonblocking(int sockfd);
 
+    /**/
     void ngx_event_accept(lpngx_connection_t oldc);
+
+    /*  */
+    void ngx_close_accepted_connection(lpngx_connection_t c);
+
+    //
     void ngx_wait_request_handler(lpngx_connection_t c);
 
     size_t ngx_sock_ntop(struct sockaddr* sa, int port, u_char* text, size_t len);
 
-    lpngx_connection_t ngx_get_connection(int isock);
-
+    /* 归还给连接池 */
     void ngx_free_connection(lpngx_connection_t c);
+
+    /* 从连接池里面取元素 */
+    lpngx_connection_t ngx_get_connection(int isock);
 
 private:
     int m_epollhandle;
-    int m_worker_connections;
+    int m_worker_connections; /* 每个worker最多连接数  */
     int m_ListenPortCount; // 监听的端口数量
 
-    // 和连接池有关
+    /* 连接池相关 */
     lpngx_connection_t m_pconnections;
-    lpngx_connection_t m_pfree_connections;
 
     // lpngx_event_t m_pread_events;
     // lpngx_event_t m_pwrite_events;
 
-    int m_connection_n;
-    int m_free_connection_n;
+    int m_connection_n; /* 连接池的大小 */
+
+    int m_free_connection_n; /* 连接池中有多少位置是空闲的 */
+    lpngx_connection_t m_pfree_connections; /* 连接池中，下一个空闲的位置 */
 
     std::vector<lpngx_listening_t> m_ListenSocketList; // 监听socket队列
 
     struct epoll_event m_events[NGX_MAX_EVENTS];
 };
-
 #endif

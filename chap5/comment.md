@@ -225,3 +225,156 @@ int connfd = accept(listenfd, (struct sockaddr*)&client_addr, &client_addr_len);
 地址的长度会被存储在 `client_addr_len` 中。
 
 ### 客户端主动关闭
+
+### 设置地址 serv_addr.sin_addr.s_addr
+
+`serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);`和`inet_pton(AF_INET, ip, &serv_addr.sin_addr);`
+这两行代码的作用都是设置网络地址，但是它们设置的地址不同。
+
+`serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);`这行代码将地址设置为`INADDR_ANY`，
+这是一个特殊的值，表示任何网络接口的地址。当你在一个多网络接口的机器上运行服务器程序时，
+如果你将地址设置为`INADDR_ANY`，那么服务器程序将在所有的网络接口上监听客户端的连接请求。
+
+而`inet_pton(AF_INET, ip, &serv_addr.sin_addr);`这行代码将地址设置为`ip`指定的地址。
+`ip`是一个字符串，表示一个 IPv4 地址或者 IPv6 地址。
+
+所以，这两行代码的作用不完全相同。如果你想让服务器程序在所有的网络接口上监听客户端的连接请求，
+你应该使用`serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);`。
+如果你想让服务器程序只在特定的网络接口上监听客户端的连接请求，
+你应该使用`inet_pton(AF_INET, ip, &serv_addr.sin_addr);`。
+
+### 学习代码的方法：搞明白调用顺序
+
+```cpp
+
+```
+
+### struct sockaddr_in
+
+```c
+struct sockaddr_in
+{
+    __SOCKADDR_COMMON (sin_);
+    in_port_t sin_port;			/* 端口号 */
+    struct in_addr sin_addr;		/* 存储了ipv4的网络地址 */
+
+    /* Pad to size of `struct sockaddr'.  */
+    unsigned char sin_zero[sizeof (struct sockaddr)
+			   - __SOCKADDR_COMMON_SIZE
+			   - sizeof (in_port_t)
+			   - sizeof (struct in_addr)];
+};
+```
+
+`__SOCKADDR_COMMON(sin_)`: 这是一个宏，用于定义与所有套接字地址结构共有的字段。
+通常，这包括地址族（AF_INET 对于 IPv4）。在不同的系统中，这部分的细节可能不同。
+通常，它会包含一个名为 sin_family 的字段，表示地址族
+
+unsigned char sin_zero[...]: 这是一个填充字段，用于确保 struct sockaddr_in 的总大小与 struct sockaddr 的大小一致。
+这种填充是必要的，因为套接字函数（如 bind()、connect()、accept() 等）期望接收 struct sockaddr 类型的参数，
+而 struct sockaddr_in 是 struct sockaddr 的一个特定于 IPv4 的版本。这个填充字段没有实际用途，通常在使用前应将其设置为全零。
+
+字节：
+
+```c
+struct sockaddr_in {
+        sa_family_t                sin_family;           /*     0     2 */
+        in_port_t                  sin_port;             /*     2     2 */
+        struct in_addr             sin_addr;             /*     4     4 */
+        unsigned char              sin_zero[8];          /*     8     8 */
+
+        /* size: 16, cachelines: 1, members: 4 */
+        /* last cacheline: 16 bytes */
+};
+
+struct in_addr {
+        in_addr_t                  s_addr;               /*     0     4 */
+
+        /* size: 4, cachelines: 1, members: 1 */
+        /* last cacheline: 4 bytes */
+};
+```
+
+### struct sockaddr
+
+```c
+/* Structure describing a generic socket address.  */
+struct sockaddr
+{
+    __SOCKADDR_COMMON (sa_);	/* Common data: address family and length.  */
+    char sa_data[14];		/* Address data.  */
+};
+```
+
+字节：
+
+```c
+struct sockaddr {
+        sa_family_t                sa_family;            /*     0     2 */
+        char                       sa_data[14];          /*     2    14 */
+
+        /* size: 16, cachelines: 1, members: 2 */
+        /* last cacheline: 16 bytes */
+};
+```
+
+### socklen_t
+
+`socklen_t` 是一个在 socket 编程中用来表示地址结构体长度的数据类型。
+它是一个整数类型，通常在各个平台上定义为 32 位的数据类型。
+在 socket API 函数中，`socklen_t` 用于指定或接收地址结构体
+（如 `struct sockaddr`、`struct sockaddr_in`、`struct sockaddr_storage` 等）的大小。
+
+使用 `socklen_t` 的典型场景包括：
+
+- 在 `bind()`, `connect()`, `accept()`, 和 `getsockname()` 等函数中，`socklen_t` 用来传递地址结构体的实际大小。
+- 在调用 `getpeername()`, `getsockname()`, 和 `accept()` 函数时，需要传入一个指向 `socklen_t` 类型变量的指针。
+  这个变量在函数调用前表示提供的缓冲区的大小，在函数调用后表示实际填充到缓冲区中的地址的大小。
+
+例如，当使用 `accept()` 函数接受一个新的连接时，`socklen_t` 变量会被用来获取连接的远程地址的实际大小：
+
+```c
+struct sockaddr_in client_address;
+socklen_t client_address_len = sizeof(client_address);
+
+int client_socket = accept(server_socket, (struct sockaddr *)&client_address, &client_address_len);
+```
+
+在这个例子中，`client_address_len` 在 `accept()` 调用之前设置为 `struct sockaddr_in` 的大小。
+当 `accept()` 返回时，`client_address_len` 可能会被更新为实际用于存储客户端地址的字节数。
+
+同样，当设置或获取 socket 选项时（例如，使用 `getsockopt()` 或 `setsockopt()`），`socklen_t` 用来表示选项值的大小。
+
+简而言之，`socklen_t` 用来处理 socket 地址结构体的长度，确保在不同的平台和编程环境中具有一致的接口。
+
+### switch 中 初始化变量
+
+这个错误通常是由于在`switch`语句中使用了初始化的变量。
+在你的代码中，你在`case AF_INET:`中初始化了一个`struct sockaddr_in* sin`。
+这在 C++中是不允许的，因为如果`switch`语句跳转到`default`，那么`sin`将不会被初始化，
+但是它的析构函数仍然会被调用，这会导致未定义的行为。
+
+你可以通过将`case AF_INET:`的代码块放在花括号中来解决这个问题，这样可以为`sin`创建一个新的作用域。
+这样，如果`switch`语句跳转到`default`，`sin`就不会被创建，也就不会调用它的析构函数。
+
+修改后的代码如下：
+
+```cpp
+switch (sa->sa_family) {
+case AF_INET: {
+    struct sockaddr_in* sin = (struct sockaddr_in*)sa;
+    u_char* p = (u_char*)&sin->sin_addr; //
+    // 日志打印 ip:port
+    if (port) {
+        p = ngx_snprintf(text, len, "%ud.%ud.%ud.%ud:%d", p[0], p[1], p[2], p[3], ntohs(sin->sin_port));
+    } else {
+        p = ngx_snprintf(text, len, "%ud.%ud.%ud.%ud", p[0], p[1], p[2], p[3]);
+    }
+    return (p - text);
+    break;
+}
+default:
+    return 0;
+    break;
+}
+```

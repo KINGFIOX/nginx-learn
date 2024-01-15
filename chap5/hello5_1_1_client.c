@@ -16,6 +16,7 @@ int main(int argc, char* argv[])
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(SERV_PORT);
+
     // 要连接的服务器
     if (inet_pton(AF_INET, argv[1] ? argv[1] : "127.0.0.1", &serv_addr.sin_addr) <= 0) {
         printf("调用inet_pton()失败，退出!\n");
