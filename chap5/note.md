@@ -1017,11 +1017,144 @@ epoll 就把 事件从双向链表中干掉。
 
 ### 收包分析及包头结构定义
 
+包头 + 包体
+
+如何规定包头的长度，包头就是一个结构
+
+a）一个包的长度不超过 3w 个字节，必须要有最大值
+
+这里的 3w 与 tcp 的一个数据包是 1024 个字节不是一回事，
+因为我们这里的 3w 字节是一个应用程序的概念，而 1024 是操作系统如何实现的概念。
+
+如果有人伪造恶意数据包，他规定包头是 300 亿，肯定不能这样，
+要不然服务器内存就会爆。
+
+b）开始定义包头结构
+
+c）注意这个问题：字节对齐，因为客户端肯定是不同机器，所以字节对齐的方式不一样。
+所以：所有网络上传输这种结构，必须都采用 1 字节对齐方式（也就是不对齐）
+
+```c
+#pragma pack(1)
+struct {
+
+};
+#pragma pack()
+```
+
 ### 收包状态宏定义
+
+收包思路：先收包头 --> 根据包头中的内容，确定包体长度，并收包体，收包状态（状态机）
+
+定义 4 种收包状态：
+
+```c
+#define _PKG_HD_INIT 0 /* 初始状态，准备接收数据包头 */
+#define _PKG_HD_RECVING 1 /* 接收包头中，包头不完整，继续接收中 */
+#define _PKG_BD_INIT 2 /* 包头刚好接收完，准备接收包体 */
+#define _PKG_BD_RECVING 3 /* 接收包体中，包体不完整，继续接收中，接收完成以后，因为状态化简，下个状态是 INIT 即可 */
+// #define _PKG_RV_FINISHED 4 /* 接收完成，可以不需要这个状态，但是这个状态可以化简 */
+```
+
+这个时候，需要在 连接池 中的每个元素（也就是每个连接）中添加一个字段（unsigned char curStat;），用来表示状态的
+
+ngx_connection_s 添加一些字段：
+
+```c
+struct ngx_connection_s {
+   // 与收包相关
+   unsigned char curStat;
+   char dataHeadInfo[_DATA_BUFSIZE_];
+   char *precvbuf;  // 指向dataHeadInfo中，下一个可写入的位置
+   unsigned int irecvlen;  // 指示收多少个字节，一开始是 包头大小，后面是包体大小（看状态）
+};
+```
+
+当有数据来的时候，epoll_wait 返回，需要调用`CSocket::ngx_wait_request_handler(lpngx_connection_t c)`
 
 ### 收包实战代码
 
-### 遗留问题处理
+所以我们要聚焦在`CSocket::ngx_wait_request_handler`这个函数。
+
+我们要求，客户端连接入服务器后，客户端有义务要主动地给服务器先发数据包，
+服务器有义务的主动地先接收包
+
+#### 消息头
+
+引入一个新结构：消息头。用来记录一些额外信息。
+
+服务器收包时，收：包头 + 消息头 + 包体
+
+可以用来处理一些过时的问题，用户过期，断线
+
+```c
+typedef struct _STRUC_MSG_HEADER {
+   lpngx_connection_t pConn;  // 连接池中对应的连接，这是一个指针
+   uint64_t iCurrsequence;  // 将来能用于比较是否连接已经作为
+} STRUC_MSG_HEADER, *LPSTRUC_MSG_HEADER;
+```
+
+会在 CSocket 中保存 包头、消息头 的宽度
+
+#### 分配和释放内存的类
+
+`misc/ngx_c_memory.cxx`
+
+单例类，因为我们收发消息，需要存放空间
+
+#### LT 收包
+
+```c
+if (n < 0) {
+   if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      // 只有ET模式下会出现这个错误，因为ET模式下，是我们用 do while(1) 不断的询问
+      // 但是在LT模式下，是epoll给我们通知的有数据包，然而数据包是空的 --> 不应该出这个错误
+      stderr();
+      return -1;
+   }
+
+   if (errno == EINTR) {  // 信号中断
+      // 如果我们却是做了假设，不会有信号，那么这个就是一个错误了
+      stderr();
+      return -1;
+   }
+
+   // 上面的没有关闭socket
+   // 从这里往下的，都认为是异常，要关闭客户端的socket，回收连接池中的连接
+
+   if (errno = ECONNRESET) {
+      // 客户端很粗暴，不关闭socket，但是却把应用程序关了
+      // 也就是：没有四次挥手再见，而是rst再见
+      stderr();
+   } else {
+      // 其他错误
+      stderr();
+   }
+   ngx_close_connection(c);
+   return -1;
+}
+```
+
+我的评价是：状态机可以使用 switch case，因为我 verilog 就是这么写的。
+我感觉我状态机写的还挺溜的。
+
+把网络序转化为本机序 htons，大小端，`ntohs(pPkgHeader->pkgLen)`(net to host socket)。
+
+恶意包或者错误包的判断：`pPkgHeader->pkgLen < 包头长度` 或者是 `pPkgHeader->pkgLen > 3w字节`
+
+合法的包头，继续处理：为包体分配内存，并且设置标记位，可以在将来回收内存，而且必须回收及时，不然内存泄露了。
+
+1. 填写消息头：记录数据包与哪个连接（连接池中的连接）挂钩，记录时间戳（后续可以看数据包是否过期）
+
+（这里还会涉及到：消息队列之类的）
+
+2. 再填写包头：
+
+3. 再填写包体：
+
+### 内存释放
+
+释放内存的时机
 
 ### 测试服务器收包，避免推诿扯皮
 
