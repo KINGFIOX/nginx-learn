@@ -30,7 +30,7 @@ sig_atomic_t ngx_reap;
 CSocket g_socket;
 
 // 集中释放资源
-void freeresource();
+static void freeresource();
 
 int main(int argc, char* argv[])
 {
@@ -67,6 +67,7 @@ int main(int argc, char* argv[])
 
     // （3）一些初始化函数，准备放这里
     ngx_log_init();
+
     // 初始化信号
     if (ngx_init_signals() != 0) {
         exitcode = 1;
@@ -103,8 +104,8 @@ int main(int argc, char* argv[])
     ngx_master_process_cycle();
 
 lblexit:
-    freeresource();
     ngx_log_stderr(0, "程序退出，再见了!");
+    freeresource();
     return 0;
 }
 

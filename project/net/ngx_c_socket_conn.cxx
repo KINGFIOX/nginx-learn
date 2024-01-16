@@ -12,7 +12,9 @@
 #include <unistd.h> // STDERR_FILENO
 
 #include "ngx_c_conf.h"
+#include "ngx_c_memory.h"
 #include "ngx_c_socket.h"
+#include "ngx_comm.h"
 #include "ngx_func.h"
 #include "ngx_global.h"
 #include "ngx_macro.h"
@@ -24,6 +26,13 @@
  */
 void CSocket::ngx_free_connection(lpngx_connection_t c)
 {
+    if (c->ifnewrecvMem == true) {
+        /* TODO 获取单例，释放 */
+        CMemory::GetInstance()->FreeMemory(c->pnewMemPointer);
+        c->pnewMemPointer = NULL;
+        c->ifnewrecvMem = false;
+    }
+
     /* c.data = m_pfree_connections */
     c->data = this->m_pfree_connections;
 
@@ -61,12 +70,30 @@ lpngx_connection_t CSocket::ngx_get_connection(int isock)
 
     memset(c, 0, sizeof(ngx_connection_t));
     c->fd = isock;
-
-    // ... 其他内容再增加
+    c->curStat = _PKG_HD_INIT; /* 收包状态 初始状态 */
+    c->precvbuf = c->dataHeadInfo; /* buffer 头指针 */
+    c->irecvlen = this->m_iLenPkgHeader; /* 包头长度 */
+    c->ifnewrecvMem = false;
+    c->pnewMemPointer = NULL;
 
     c->instance = !instance; // instance 翻转
     c->iCurrsequence = iCurrsequence;
     ++c->iCurrsequence;
 
     return c;
+}
+
+/**
+ * @brief 回收连接池中的连接，不然连接池很快就耗光了
+ * 
+ * @param c 
+ */
+void CSocket::ngx_close_connection(lpngx_connection_t c)
+{
+    if (close(c->fd) == -1) {
+        ngx_log_error_core(NGX_LOG_ALERT, errno, "CSocket::ngx_close_accepted_connection()中close(%d)失败!", c->fd);
+    }
+    c->fd = -1; // 清空c.fd
+    ngx_free_connection(c); // 从 连接池 中释放连接
+    return;
 }

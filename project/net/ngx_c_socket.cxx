@@ -13,7 +13,9 @@
 #include <vector>
 
 #include "ngx_c_conf.h"
+#include "ngx_c_memory.h"
 #include "ngx_c_socket.h"
+#include "ngx_comm.h"
 #include "ngx_func.h"
 #include "ngx_global.h"
 #include "ngx_macro.h"
@@ -29,14 +31,18 @@ CSocket::CSocket()
     // m_pread_events = NULL;
     // m_pwrite_events = NULL;
 
+    /* 获取包头的长度 */
+    m_iLenPkgHeader = sizeof(COMM_PKG_HEADER);
+    m_iLenMsgHeader = sizeof(STRUC_MSG_HEADER);
+
     return;
 }
 
 CSocket::~CSocket()
 {
     /* TODO 来一点新特性 */
-    for (auto pos : m_ListenSocketList) {
-        delete pos;
+    for (auto v : m_ListenSocketList) {
+        delete v;
     } // end for
     m_ListenSocketList.clear();
 
@@ -44,6 +50,10 @@ CSocket::~CSocket()
     if (m_pconnections != NULL) {
         delete[] m_pconnections;
     }
+
+    /* 接收消息队列中内容释放 */
+    clearMsgRecvQueue();
+
     return;
 }
 
@@ -58,7 +68,6 @@ bool CSocket::ngx_open_listening_sockets()
 
     /* 读取配置：监听端口的数量 */
     CConfig* p_config = CConfig::GetInstance();
-    this->m_ListenPortCount = p_config->GetIntDefault("ListenPortCount", m_ListenPortCount);
 
     struct sockaddr_in serv_addr; // 服务器地址结构体
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -75,7 +84,7 @@ bool CSocket::ngx_open_listening_sockets()
         }
 
         int reuseaddr = 1;
-        if (setsockopt(isock, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr))) {
+        if (setsockopt(isock, SOL_SOCKET, SO_REUSEADDR, (const void*)&reuseaddr, sizeof(reuseaddr)) == -1) {
             ngx_log_stderr(errno, "CSocket::ngx_open_listening_sockets()中setsockopt()失败, i=%d", i);
             close(isock);
             return false;
@@ -143,7 +152,10 @@ bool CSocket::setnonblocking(int sockfd)
     return true;
 }
 
-// 关闭 监听 的 socket
+/**
+ * @brief 关闭 监听 的 socket
+ * 
+ */
 void CSocket::ngx_close_listening_sockets()
 {
     /* 来一点新特性 */
@@ -169,7 +181,6 @@ void CSocket::ReadConf()
 
     // 表示 worker 进程可以打开的 最大连接数，如果在配置文件中没有定义，那么默认是1
     this->m_worker_connections = p_config->GetIntDefault("worker_connections", m_worker_connections);
-
     // 监听几个端口
     this->m_ListenPortCount = p_config->GetIntDefault("ListenPortCount", m_ListenPortCount);
     return;
@@ -195,7 +206,7 @@ int CSocket::ngx_epoll_init()
 
     int i = this->m_connection_n;
     lpngx_connection_t c = this->m_pconnections;
-    lpngx_connection_t next = NULL; // c[i-1].next == c[i]
+    lpngx_connection_t next = NULL; /* c[i-1].next == c[i] */
     do {
         i--;
         c[i].data = next;
@@ -211,13 +222,13 @@ int CSocket::ngx_epoll_init()
     for (auto v : m_ListenSocketList) {
         lpngx_connection_t c = ngx_get_connection(v->fd); // 从连接池中获取一个空闲连接对象
         if (c == NULL) {
-            ngx_log_stderr(errno, "const char *fmt, ...");
+            ngx_log_stderr(errno, "CSocket::ngx_epoll_init()中ngx_get_connection()失败.");
             exit(2); // 致命错误，直接退出
         }
 
         /* 连接对象 与 监听对象 关联 */
-        c->listening = v;
-        v->connection = c;
+        c->listening = v; // 连接设置 listen socket
+        v->connection = c; // listen 设置 连接（连接池）
 
         c->rhandler = &CSocket::ngx_event_accept; /* 对于 listenfd，那么他的处理函数设置为 添加新连接 */
 
@@ -257,11 +268,9 @@ int CSocket::ngx_epoll_add_event(int fd, int readevent, int writeevent, uint32_t
         ev.events |= otherflag;
     }
 
-    // TODO
     /* 这里的 ev.data 只会表现ptr的特征，union，这个ev会在epoll_wait的时候 收回片头 */
     ev.data.ptr = (void*)((uintptr_t)c | c->instance);
 
-    //
     if (epoll_ctl(this->m_epollhandle, eventtype, fd, &ev)) {
         ngx_log_stderr(errno, "const char *fmt, ...");
         return -1;
@@ -356,4 +365,19 @@ int CSocket::ngx_epoll_process_events(int timer)
 
     } // end for (int i = 0; i < events; ++i)
     return 1;
+}
+
+/**
+ * @brief 清理 接收消息队列
+ * 
+ */
+void CSocket::clearMsgRecvQueue()
+{
+    CMemory* p_memory = CMemory::GetInstance();
+
+    while (!m_MsgRecvQueue.empty()) {
+        char* sTmpMempoint = this->m_MsgRecvQueue.front();
+        this->m_MsgRecvQueue.pop_front();
+        p_memory->FreeMemory(sTmpMempoint);
+    }
 }

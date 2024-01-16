@@ -691,3 +691,92 @@ void receive_message(int sockfd) {
 这确保了接收方能够接收完整的消息。如果没有足够的数据可用，该调用将阻塞。
 
 这些方法可以有效地解决粘包问题，但实际选用哪种方法应根据应用程序的具体需求和网络条件来决定。
+
+### EPOLLIN EPOLLRDHUP
+
+`EPOLLIN` 和 `EPOLLRDHUP` 是 Linux 系统下，`epoll` I/O 多路复用机制中的事件标志，用于指示某种类型的 I/O 事件发生。
+
+1. **EPOLLIN**：这个标志表示对应的文件描述符（通常是一个网络套接字）上有可读取的数据。
+   具体来说，当一个套接字接收缓冲区的数据变得非空，即有新的数据可以读取时，或者当一个流（如管道或文件）的末尾被达到时，就会触发这个事件。
+   如果在一个套接字上注册了 `EPOLLIN` 事件并被 `epoll` 监测到，那么可以进行无阻塞的读操作，因为已知至少有一些数据可读或者已经到达了文件末尾。
+
+2. **EPOLLRDHUP**：这是一个比较新的标志，用于表示对端套接字连接已经关闭，或者对端关闭了写操作。
+   这个标志在处理半关闭的连接时非常有用，比如在 TCP 连接中，当对方调用 `shutdown` 函数关闭了写端，但读端仍然开放时。
+   `EPOLLRDHUP` 可以让你知道这种情况发生，从而可以适当地关闭套接字或进行其他清理工作。
+   在使用 `EPOLLRDHUP` 事件时，必须确保你的系统支持这一事件，因为它是在较新的 Linux 内核版本中引入的。
+
+`epoll` 是 Linux 下的一个高效的 I/O 事件通知机制，
+相对于传统的 `select` 和 `poll`，`epoll` 能够扩展到大数量的文件描述符，并且提供了更好的性能。
+这是因为 `epoll` 使用了一种事件通知机制，当状态发生变化时，
+只通知那些发生变化的文件描述符，而不是像 `select` 或 `poll` 那样轮询所有的文件描述符。
+
+### recv
+
+`recv` 函数是用于接收数据的网络编程接口，在类 Unix 操作系统（如 Linux）中，它的原型定义在 `<sys/socket.h>` 头文件中。
+它通常用于 TCP 套接字，因为 TCP 是面向连接的协议，提供的是可靠的数据流服务。`recv` 函数的基本用法如下：
+
+```c
+#include <sys/types.h>
+#include <sys/socket.h>
+
+ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+```
+
+参数说明：
+
+- `sockfd`：指定接收端套接字描述符。
+- `buf`：指向用于接收数据的缓冲区的指针。
+- `len`：缓冲区的长度，即可接收的最大字节数。
+- `flags`：用于指定接收选项的标志位，通常设置为 0。其他选项可以是 `MSG_PEEK`（查看数据但不从队列中删除）、`MSG_WAITALL`（等待所有请求的数据）等。
+
+返回值：
+
+- 成功时返回读取到的字节数，如果连接已经关闭，则返回 0。
+- 失败时返回 -1，并且设置 `errno` 以指示错误类型。
+
+下面是一个简单的例子，说明如何使用 `recv` 函数：
+
+```c
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+
+#define MAXBUF 1024
+
+int main() {
+    int sockfd;  // 套接字描述符，通常是先调用 socket() 函数创建
+    char buffer[MAXBUF];
+    ssize_t received;
+
+    // 假设 sockfd 已经是一个与某个服务器建立了连接的套接字
+    // ...
+
+    // 尝试接收数据
+    received = recv(sockfd, buffer, MAXBUF, 0);
+
+    if (received == -1) {
+        // 出错处理
+        fprintf(stderr, "recv failed: %s\n", strerror(errno));
+        // 根据错误类型进行处理，例如可以关闭套接字等
+    } else if (received == 0) {
+        // 连接已经关闭
+        printf("The server has closed the connection\n");
+    } else {
+        // 正常接收到数据，处理数据
+        printf("Received %zd bytes: %s\n", received, buffer);
+        // 这里可以对接收到的数据进行相应的处理
+    }
+
+    // 关闭套接字
+    close(sockfd);
+
+    return 0;
+}
+```
+
+请注意，实际使用中需要创建套接字并与远程主机建立连接（对于 TCP 套接字），
+以上示例只展示了 `recv` 函数的调用过程，不包括套接字的创建和连接建立。
+此外，网络程序应该始终检查返回值，并对可能的各种情况进行妥善处理。

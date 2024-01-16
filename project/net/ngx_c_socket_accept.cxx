@@ -23,22 +23,6 @@
 #include "ngx_macro.h"
 
 /**
- * @brief 回收连接池中的连接，不然连接池很快就耗光了
- * 
- * @param c 
- */
-void CSocket::ngx_close_accepted_connection(lpngx_connection_t c)
-{
-    int fd = c->fd;
-    ngx_free_connection(c); // 从 连接池 中释放连接
-    c->fd = -1; // 清空c.fd
-    if (close(fd) == -1) {
-        ngx_log_error_core(NGX_LOG_ALERT, errno, "CSocket::ngx_close_accepted_connection()中close(%d)失败!", fd);
-    }
-    return;
-}
-
-/**
  * @brief 添加新连接，并加入到红黑树中
  * 
  * @param oldc 监听socket 对应的 ngx_connection_t 对象（内存）
@@ -107,7 +91,7 @@ void CSocket::ngx_event_accept(lpngx_connection_t oldc)
         if (!use_accept4) {
             /* 如果不是 accept4，手动设置非阻塞 */
             if (setnonblocking(s) == false) {
-                ngx_close_accepted_connection(newc);
+                ngx_close_connection(newc);
                 return;
             }
         }
@@ -124,10 +108,11 @@ void CSocket::ngx_event_accept(lpngx_connection_t oldc)
                 EPOLL_CTL_ADD,
                 newc)
             == -1) {
-            ngx_close_accepted_connection(newc);
+            ngx_close_connection(newc);
             return;
         }
-
         break; /* 这种 while(1) + break 写法还是挺有意思的 */
     } while (1);
+
+    return;
 }
